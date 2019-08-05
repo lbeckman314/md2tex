@@ -2,7 +2,7 @@
 name = "md2pdf-mdbook"
 version = "0.0.1"
 authors = ["lbeckman314 <liam@liambeckman.com>"]
-description = "A small utility to convert markdown files to pdf exploiting tectonic. This is a forked version based off of 	tforgione's awesome library (https://github.com/lbeckman314/md2pdf-mdbook)."
+description = "A small utility to convert markdown files to pdf exploiting tectonic"
 edition = "2018"
 license = "MIT"
 repository = "https://github.com/lbeckman314/md2pdf-mdbook"
