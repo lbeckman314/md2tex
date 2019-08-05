@@ -1,0 +1,18 @@
+[package]
+name = "md2pdf-mdbook"
+version = "0.0.1"
+authors = ["lbeckman314 <liam@liambeckman.com>"]
+description = "A small utility to convert markdown files to pdf exploiting tectonic. This is a forked version based off of 	tforgione's awesome library (https://github.com/lbeckman314/md2pdf-mdbook)."
+edition = "2018"
+license = "MIT"
+repository = "https://github.com/lbeckman314/md2pdf-mdbook"
+readme = "README.md"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tectonic = "0.1.11"
+pulldown-cmark = "0.5.2"
+clap = "2.33.0"
+walkdir = "2.2.9"
+Inflector = "0.11.4"
