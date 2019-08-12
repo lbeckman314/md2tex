@@ -6,7 +6,7 @@
 ### Usage
 
 ```
-md2tex -i input.md -o output.pdf
+md2tex -i input.md -o output.tex
 ```
 
 Thanks to [tectonic](https://tectonic-typesetting.github.io), we're able to
