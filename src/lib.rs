@@ -1,19 +1,16 @@
-use pulldown_cmark::{Event, Parser, Tag, Options};
-use walkdir::WalkDir;
+extern crate regex;
+
 use inflector::cases::kebabcase::to_kebab_case;
+use pulldown_cmark::{Event, Options, Parser, Tag};
+use regex::Regex;
+use std::default::Default;
 use std::fs;
+use std::io;
+use std::io::BufRead;
 use std::io::BufReader;
-use std::io::prelude::*;
-
-pub const LATEX_BEGIN: &str = r#"
-\begin{document}
-\maketitle
-\clearpage
-\tableofcontents
-\clearpage
-"#;
-
-pub const LATEX_FOOTER: &str = "\n\\end{document}\n";
+use std::iter::repeat;
+use std::string::String;
+use walkdir::WalkDir;
 
 #[derive(Debug)]
 enum EventType {
@@ -21,37 +18,38 @@ enum EventType {
     Emphasis,
     Header,
     Strong,
+    TableHead,
     Text,
 }
 
 struct CurrentType {
-    typ: EventType,
+    event_type: EventType,
 }
 
 pub fn markdown_to_latex(markdown: String) -> String {
-    let latex_header = include_str!("header.tex");
-    let latex_languages = include_str!("languages.tex");
-
-    let mut output = String::from(latex_header);
-    output.push_str(&latex_languages);
-    output.push_str(&LATEX_BEGIN);
+    let mut output = String::new();
 
     let mut header_value = String::new();
 
-    let mut current_type: CurrentType = CurrentType{typ: EventType::Text};
+    let mut current: CurrentType = CurrentType {
+        event_type: EventType::Text,
+    };
+    let mut cells = 0;
 
     let mut options = Options::empty();
     options.insert(Options::FIRST_PASS);
     options.insert(Options::ENABLE_STRIKETHROUGH);
     options.insert(Options::ENABLE_FOOTNOTES);
+    options.insert(Options::ENABLE_TASKLISTS);
+    options.insert(Options::ENABLE_TABLES);
 
-    let parser = Parser::new(&markdown);
+    let parser = Parser::new_ext(&markdown, options);
 
     for event in parser {
         println!("Event: {:?}", event);
         match event {
             Event::Start(Tag::Header(level)) => {
-                current_type.typ = EventType::Header;
+                current.event_type = EventType::Header;
                 output.push_str("\n");
                 output.push_str("\\");
                 match level {
@@ -64,7 +62,7 @@ pub fn markdown_to_latex(markdown: String) -> String {
                     5 => output.push_str("subparagraph{"),
                     _ => println!("header is out of range."),
                 }
-            },
+            }
             Event::End(Tag::Header(_)) => {
                 output.push_str("}\n");
                 output.push_str("\\");
@@ -76,17 +74,17 @@ pub fn markdown_to_latex(markdown: String) -> String {
                 output.push_str("label{");
                 output.push_str(&to_kebab_case(&header_value));
                 output.push_str("}\n");
-            },
+            }
             Event::Start(Tag::Emphasis) => {
-                current_type.typ = EventType::Emphasis;
+                current.event_type = EventType::Emphasis;
                 output.push_str("\\emph{");
-            },
+            }
             Event::End(Tag::Emphasis) => output.push_str("}"),
 
             Event::Start(Tag::Strong) => {
-                current_type.typ = EventType::Strong;
+                current.event_type = EventType::Strong;
                 output.push_str("\\textbf{");
-            },
+            }
             Event::End(Tag::Strong) => output.push_str("}"),
 
             Event::Start(Tag::List(None)) => output.push_str("\\begin{itemize}\n"),
@@ -95,13 +93,21 @@ pub fn markdown_to_latex(markdown: String) -> String {
             Event::Start(Tag::List(Some(_))) => output.push_str("\\begin{enumerate}\n"),
             Event::End(Tag::List(Some(_))) => output.push_str("\\end{enumerate}\n"),
 
+            Event::Start(Tag::Paragraph) => {
+                output.push_str("\n");
+            }
+
+            Event::End(Tag::Paragraph) => {
+                output.push_str(r"\\");
+                output.push_str("\n");
+            }
+
             Event::Start(Tag::Link(_, url, _)) => {
                 if url.starts_with("http") {
                     output.push_str("\\href{");
                     output.push_str(&*url);
                     output.push_str("}{");
-                }
-                else {
+                } else {
                     output.push_str("\\hyperref[");
                     let mut found = false;
 
@@ -121,7 +127,7 @@ pub fn markdown_to_latex(markdown: String) -> String {
                             let title = title_string(buffer);
                             output.push_str(&title);
 
-                            println!("The title is '{}'", title);
+                            println!("The`` title is '{}'", title);
 
                             found = true;
                             break;
@@ -133,80 +139,197 @@ pub fn markdown_to_latex(markdown: String) -> String {
                     }
 
                     output.push_str("]{");
-                    }
-            },
+                }
+            }
 
             Event::End(Tag::Link(_, _, _)) => {
                 output.push_str("}");
+            }
+
+            Event::Start(Tag::Table(_)) => {
+                output.push_str("\n");
+                output.push_str("\n");
+                output.push_str(r"\begingroup");
+                output.push_str("\n");
+                output.push_str(r"\setlength{\LTleft}{-20cm plus -1fill}");
+                output.push_str("\n");
+                output.push_str(r"\setlength{\LTright}{\LTleft}");
+                output.push_str("\n");
+                output.push_str(r"\begin{longtable}{!!!}");
+                output.push_str("\n");
+                output.push_str(r"\hline");
+                output.push_str("\n");
+                output.push_str(r"\hline");
+                output.push_str("\n");
+            }
+
+            Event::Start(Tag::TableHead) => {
+                current.event_type = EventType::TableHead;
+            }
+
+            Event::End(Tag::TableHead) => {
+                output.truncate(output.len() - 2);
+                output.push_str(r"\\");
+                output.push_str("\n");
+
+                output.push_str(r"\hline");
+                output.push_str("\n");
+                current.event_type = EventType::Text;
+            }
+
+            Event::End(Tag::Table(_)) => {
+                output.push_str("\n");
+                output.push_str(r"\arrayrulecolor{black}\hline");
+                output.push_str("\n");
+                output.push_str(r"\end{longtable}");
+                output.push_str("\n");
+                output.push_str(r"\endgroup");
+                output.push_str("\n");
+                output.push_str("\n");
+                let mut cols = String::new();
+                for _i in 0..cells {
+                    cols.push_str(&format!(
+                        r"C{{{width}\textwidth}} ",
+                        width = 1. / cells as f64
+                    ));
+                }
+                output = output.replace("!!!", &cols);
+                cells = 0;
+            }
+
+            Event::Start(Tag::TableCell) => match current.event_type {
+                EventType::TableHead => {
+                    output.push_str(r"\bfseries{");
+                }
+                _ => (),
             },
+
+            Event::End(Tag::TableCell) => {
+                match current.event_type {
+                    EventType::TableHead => {
+                        output.push_str(r"}");
+                        cells += 1;
+                    }
+                    _ => (),
+                }
+
+                output.push_str(" & ");
+            }
+
+            Event::End(Tag::TableRow) => {
+                output.truncate(output.len() - 2);
+                output.push_str(r"\\");
+                output.push_str(r"\arrayrulecolor{lightgray}\hline");
+                output.push_str("\n");
+            }
 
             Event::Start(Tag::Image(_, path, title)) => {
                 output.push_str("\\begin{figure}\n");
                 output.push_str("\\centering\n");
                 output.push_str("\\includegraphics[width=\\textwidth]{");;
-                output.push_str(&*path);
+                output.push_str(&format!("../../src/{path}", path = path));
                 output.push_str("}\n");
                 output.push_str("\\caption{");
                 output.push_str(&*title);
                 output.push_str("}\n\\end{figure}\n");
-            },
+            }
 
             Event::Start(Tag::Item) => output.push_str("\\item "),
             Event::End(Tag::Item) => output.push_str("\n"),
 
             Event::Start(Tag::CodeBlock(lang)) => {
-                current_type.typ = EventType::Code;
-                if ! lang.is_empty() {
+                let re = Regex::new(r",.*").unwrap();
+                current.event_type = EventType::Code;
+                if !lang.is_empty() {
                     output.push_str("\\begin{lstlisting}[language=");
-                    output.push_str(&*lang.replace(",editable", ""));
+                    output.push_str(&re.replace(&lang, ""));
                     output.push_str("]\n");
                 } else {
                     output.push_str("\\begin{lstlisting}\n");
                 }
-            },
+            }
 
             Event::End(Tag::CodeBlock(_)) => {
                 output.push_str("\n\\end{lstlisting}\n");
-                current_type.typ = EventType::Text;
-            },
+                current.event_type = EventType::Text;
+            }
 
             Event::Code(t) => {
                 output.push_str("\\lstinline|");
-                output.push_str(&*t);
+                output.push_str(&*t.replace("…", "..."));
                 output.push_str("|");
-            },
+            }
+
+            Event::InlineHtml(t) => {
+                let mut latex = t.into_string();
+                let re = Regex::new(r#"\s(class|id)=".*">"#).unwrap();
+                latex = re.replace(&latex, "").to_string();
+
+                if latex.contains("code>") {
+                    latex = latex
+                        .replace("<code>", r"\lstinline+")
+                        .replace("</code>", r"+");
+                }
+                else if latex.contains("span>") {
+                    latex = latex
+                        .replace("<span class=\"caption\">", "")
+                        .replace(r"</span>", "");
+                }
+//| <img src="img/ferris/does_not_compile.svg" class="ferris-explain"/>    | This code does not compile!                      |
+                else if latex.contains("img>") {
+                    latex = latex
+                        .replace("<span class=\"caption\">", "")
+                        .replace(r"</span>", "");
+                }
+                output.push_str(&latex);
+            }
+
+            Event::Html(t) => {
+                let latex = t
+                    .replace("</code>", r"\end{lstlisting}")
+                    .replace("<code class=\"language-", r"\begin{lstlisting}[language=")
+                    .replace("<pre>", "")
+                    .replace("</pre>", "")
+                    .replace("\">", "]");
+                output.push_str(&latex);
+            }
 
             Event::Text(t) => {
-                println!("current_type: {:?}", current_type.typ);
-                match current_type.typ {
-                    EventType::Strong | EventType::Emphasis | EventType::Text  => {
-                        output.push_str(&*t.replace("&", "\\&")
-                            .replace("_", "\\_")
-                            .replace("\\<", "<")
-                            .replace("#", "\\#"));
-                    },
-                    EventType::Header => {
-                        output.push_str(&*t.replace("&", "\\&")
-                            .replace("_", "\\_")
-                            .replace("\\<", "<")
-                            .replace("#", "\\#"));
+                println!("current_type: {:?}", current.event_type);
+                match current.event_type {
+                    EventType::Strong
+                    | EventType::Emphasis
+                    | EventType::Text
+                    | EventType::Header => {
+                        output.push_str(
+                            &*t.replace("&", r"\&")
+                                .replace("_", r"\_")
+                                .replace(r"\<", "<")
+                                .replace(r"%", "%")
+                                .replace(r"$", r"\$")
+                                .replace(r"—", "---")
+                                .replace("#", r"\#"),
+                        );
                         header_value = t.into_string();
-                    },
+                    }
                     _ => {
                         output.push_str(&*t);
-                    },
+                    }
                 }
-            },
+            }
 
             Event::SoftBreak => {
                 output.push('\n');
-            },
+            }
+
+            Event::HardBreak => {
+                output.push_str(r"\\");
+                output.push('\n');
+            }
 
             _ => (),
         }
     }
-
-    output.push_str(LATEX_FOOTER);
 
     output
 }
@@ -221,7 +344,8 @@ pub fn markdown_to_pdf(markdown: String) -> Result<Vec<u8>, tectonic::Error> {
 /// leading/trailing whitespace, and returns the title.
 /// https://codereview.stackexchange.com/questions/135013/rust-function-to-read-the-first-line-of-a-file-strip-leading-hashes-and-whitesp
 fn title_string<R>(mut rdr: R) -> String
-where R: BufRead,
+where
+    R: BufRead,
 {
     let mut first_line = String::new();
 
