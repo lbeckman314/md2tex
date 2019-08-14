@@ -262,26 +262,31 @@ pub fn markdown_to_latex(markdown: String) -> String {
 
             Event::InlineHtml(t) => {
                 let mut latex = t.into_string();
-                let re = Regex::new(r#"\s(class|id)=".*">"#).unwrap();
-                latex = re.replace(&latex, "").to_string();
 
-                if latex.contains("code>") {
+                // remove all "class=foo" and "id=bar".
+                let re = Regex::new(r#"\s(class|id)="[a-zA-Z0-9-_]*"#).unwrap();
+                latex = re.replace(&latex, "").to_string();
+                latex = latex.replace("/>", "");
+
+                if latex.contains("<code") {
                     latex = latex
                         .replace("<code>", r"\lstinline+")
                         .replace("</code>", r"+");
+                    output.push_str(&latex);
+                } else if latex.contains("<span") {
+                    latex = latex.replace("<span", "").replace(r"</span>", "");
+                    output.push_str(&latex);
+                } else if latex.contains("<img") {
+                    //let src = Regex::new(r#"src="(.*?)"#).unwrap();
+                    let src = Regex::new(r#"src="([a-zA-Z/_.]*)"#).unwrap();
+                    let caps = src.captures(&latex).unwrap();
+                    let path = caps.get(1).unwrap().as_str();
+                    println!("path: {}", path);
+
+                    output.push_str("\\includegraphics[width=0.2\\textwidth]{");;
+                    output.push_str(&format!("../../src/{path}", path = path));
+                    output.push_str("}\n");
                 }
-                else if latex.contains("span>") {
-                    latex = latex
-                        .replace("<span class=\"caption\">", "")
-                        .replace(r"</span>", "");
-                }
-//| <img src="img/ferris/does_not_compile.svg" class="ferris-explain"/>    | This code does not compile!                      |
-                else if latex.contains("img>") {
-                    latex = latex
-                        .replace("<span class=\"caption\">", "")
-                        .replace(r"</span>", "");
-                }
-                output.push_str(&latex);
             }
 
             Event::Html(t) => {
@@ -303,6 +308,8 @@ pub fn markdown_to_latex(markdown: String) -> String {
                     | EventType::Header => {
                         output.push_str(
                             &*t.replace("&", r"\&")
+                                .replace(r"\s", r"\textbackslash{}s")
+                                .replace(r"\w", r"\textbackslash{}w")
                                 .replace("_", r"\_")
                                 .replace(r"\<", "<")
                                 .replace(r"%", "%")
