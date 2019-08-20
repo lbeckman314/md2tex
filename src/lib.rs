@@ -18,6 +18,7 @@ enum EventType {
     Code,
     Emphasis,
     Header,
+    Html,
     Strong,
     Table,
     TableHead,
@@ -224,6 +225,10 @@ pub fn markdown_to_latex(markdown: String) -> String {
                 output.push_str(" & ");
             }
 
+            Event::Start(Tag::TableRow) => {
+                current.event_type = EventType::Table;
+            }
+
             Event::End(Tag::TableRow) => {
                 output.truncate(output.len() - 2);
                 output.push_str(r"\\");
@@ -300,11 +305,14 @@ pub fn markdown_to_latex(markdown: String) -> String {
             Event::InlineHtml(t) => {
                 // convert common html patterns to latex
                 output.push_str(&html2tex(t.into_string(), &current));
+                current.event_type = EventType::Text;
             }
 
             Event::Html(t) => {
+                current.event_type = EventType::Html;
                 // convert common html patterns to latex
                 output.push_str(&html2tex(t.into_string(), &current));
+                current.event_type = EventType::Text;
             }
 
             Event::Text(t) => {
@@ -358,6 +366,8 @@ pub fn html2tex(html: String, current: &CurrentType) -> String {
     // remove all "class=foo" and "id=bar".
     let re = Regex::new(r#"\s(class|id)="[a-zA-Z0-9-_]*">"#).unwrap();
     latex = re.replace(&latex, "").to_string();
+
+    // image html tags
     if latex.contains("<img") {
         //let src = Regex::new(r#"src="(.*?)"#).unwrap();
         let src = Regex::new(r#"src="([a-zA-Z0-9-/_.]*)"#).unwrap();
@@ -375,20 +385,39 @@ pub fn html2tex(html: String, current: &CurrentType) -> String {
         }
 
         match current.event_type {
-            EventType::Table => output.push_str("\\includegraphics[width=0.2\\textwidth]{"),
-            _ => output.push_str("\\includegraphics[width=\\textwidth]{"),
+            EventType::Table => {
+                output.push_str("\\includegraphics[width=0.2\\textwidth]{")
+            },
+            _ => {
+                output.push_str("\\includegraphics[width=0.8\\textwidth]{");
+            },
         }
 
         output.push_str(&path);
         output.push_str("}\n");
-    } else {
-        latex = latex
-            .replace("/>", "")
-            .replace("<code>", r"\lstinline+")
-            .replace("</code>", r"+")
-            .replace("<span", "")
-            .replace(r"</span>", "");
 
+        // all other tags
+    } else {
+        match current.event_type {
+            EventType::Html => {
+                let mut lang = String::new();
+
+                latex = latex
+                    .replace("/>", "")
+                    .replace("<code class=\"language-", &lang)
+                    .replace("</code>", r"\\end{lstlisting}")
+                    .replace("<span", "")
+                    .replace(r"</span>", "")
+            },
+            _ => {
+                latex = latex
+                    .replace("/>", "")
+                    .replace("<code", r"\lstinline|")
+                    .replace("</code>", r"|")
+                    .replace("<span", "")
+                    .replace(r"</span>", "");
+                },
+        }
         // remove all HTML comments.
         let re = Regex::new(r"<!--.*-->").unwrap();
         output.push_str(&re.replace(&latex, ""));
