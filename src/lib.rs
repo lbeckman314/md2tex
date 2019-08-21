@@ -13,6 +13,8 @@ use std::path::Path;
 use std::string::String;
 use walkdir::WalkDir;
 
+/// Used to keep track of current pulldown_cmark "event".
+/// TODO: Is there a native pulldown_cmark method to do this?
 #[derive(Debug)]
 enum EventType {
     Code,
@@ -29,6 +31,7 @@ pub struct CurrentType {
     event_type: EventType,
 }
 
+/// Converts markdown string to latex string.
 pub fn markdown_to_latex(markdown: String) -> String {
     let mut output = String::new();
 
@@ -153,20 +156,20 @@ pub fn markdown_to_latex(markdown: String) -> String {
 
             Event::Start(Tag::Table(_)) => {
                 current.event_type = EventType::Table;
-                output.push_str("\n");
-                output.push_str("\n");
-                output.push_str(r"\begingroup");
-                output.push_str("\n");
-                output.push_str(r"\setlength{\LTleft}{-20cm plus -1fill}");
-                output.push_str("\n");
-                output.push_str(r"\setlength{\LTright}{\LTleft}");
-                output.push_str("\n");
-                output.push_str(r"\begin{longtable}{!!!}");
-                output.push_str("\n");
-                output.push_str(r"\hline");
-                output.push_str("\n");
-                output.push_str(r"\hline");
-                output.push_str("\n");
+                let table_start = vec![
+                    "\n",
+                    r"\begingroup",
+                    r"\setlength{\LTleft}{-20cm plus -1fill}",
+                    r"\setlength{\LTright}{\LTleft}",
+                    r"\begin{longtable}{!!!}",
+                    r"\hline",
+                    r"\hline",
+                    "\n",
+                ];
+                for element in table_start {
+                    output.push_str(element);
+                    output.push_str("\n");
+                }
             }
 
             Event::Start(Tag::TableHead) => {
@@ -186,14 +189,18 @@ pub fn markdown_to_latex(markdown: String) -> String {
             }
 
             Event::End(Tag::Table(_)) => {
-                output.push_str("\n");
-                output.push_str(r"\arrayrulecolor{black}\hline");
-                output.push_str("\n");
-                output.push_str(r"\end{longtable}");
-                output.push_str("\n");
-                output.push_str(r"\endgroup");
-                output.push_str("\n");
-                output.push_str("\n");
+                let table_end = vec![
+                    r"\arrayrulecolor{black}\hline",
+                    r"\end{longtable}",
+                    r"\endgroup",
+                    "\n",
+                ];
+
+                for element in table_end {
+                    output.push_str(element);
+                    output.push_str("\n");
+                }
+
                 let mut cols = String::new();
                 for _i in 0..cells {
                     cols.push_str(&format!(
@@ -284,20 +291,16 @@ pub fn markdown_to_latex(markdown: String) -> String {
             Event::Code(t) => {
                 output.push_str("\\lstinline|");
                 match current.event_type {
-                    EventType::Header => {
-                        output.push_str(
-                            &*t.replace("#", r"\#")
-                                .replace("…", "...")
-                                .replace("З", "3")
-                        )
-                    },
-                    _ => {
-                        output.push_str(
-                            &*t.replace("…", "...")
-                                .replace("З", "3")
-                                .replace("�", r"\�")
-                        )
-                    },
+                    EventType::Header => output.push_str(
+                        &*t.replace("#", r"\#")
+                            .replace("…", "...")
+                            .replace("З", "3"),
+                    ),
+                    _ => output.push_str(
+                        &*t.replace("…", "...")
+                            .replace("З", "3")
+                            .replace("�", r"\�"),
+                    ),
                 }
                 output.push_str("|");
             }
@@ -322,6 +325,7 @@ pub fn markdown_to_latex(markdown: String) -> String {
                     | EventType::Emphasis
                     | EventType::Text
                     | EventType::Header => {
+                        // TODO more elegant way to do ordered `replace`s (structs?).
                         output.push_str(
                             &*t.replace(r"\", r"\\")
                                 .replace("&", r"\&")
@@ -357,8 +361,9 @@ pub fn markdown_to_latex(markdown: String) -> String {
 }
 
 /// Simple HTML parser.
+///
 /// Eventually I hope to use a mature HTML to LaTeX parser.
-/// Something like https://github.com/Adonai/html2md/
+/// Something along the lines of https://github.com/Adonai/html2md/
 pub fn html2tex(html: String, current: &CurrentType) -> String {
     let mut latex = html;
     let mut output = String::new();
@@ -385,18 +390,16 @@ pub fn html2tex(html: String, current: &CurrentType) -> String {
         }
 
         match current.event_type {
-            EventType::Table => {
-                output.push_str("\\includegraphics[width=0.2\\textwidth]{")
-            },
+            EventType::Table => output.push_str("\\includegraphics[width=0.2\\textwidth]{"),
             _ => {
                 output.push_str("\\includegraphics[width=0.8\\textwidth]{");
-            },
+            }
         }
 
         output.push_str(&path);
         output.push_str("}\n");
 
-        // all other tags
+    // all other tags
     } else {
         match current.event_type {
             EventType::Html => {
@@ -408,7 +411,7 @@ pub fn html2tex(html: String, current: &CurrentType) -> String {
                     .replace("</code>", r"\\end{lstlisting}")
                     .replace("<span", "")
                     .replace(r"</span>", "")
-            },
+            }
             _ => {
                 latex = latex
                     .replace("/>", "")
@@ -416,7 +419,7 @@ pub fn html2tex(html: String, current: &CurrentType) -> String {
                     .replace("</code>", r"|")
                     .replace("<span", "")
                     .replace(r"</span>", "");
-                },
+            }
         }
         // remove all HTML comments.
         let re = Regex::new(r"<!--.*-->").unwrap();
@@ -451,6 +454,7 @@ where
 }
 
 /// Converts an SVG file to a PNG file.
+///
 /// Example: foo.svg becomes foo.svg.png
 pub fn svg2png(filename: String) -> Option<Box<dyn OutputImage>> {
     println!("svg2png path: {}", &filename);
@@ -464,7 +468,8 @@ pub fn svg2png(filename: String) -> Option<Box<dyn OutputImage>> {
 }
 
 /// Extract extension from filename
-/// https://stackoverflow.com/questions/45291832/extracting-a-file-extension-from-a-given-path-in-rust-idiomatically
+///
+/// Source:  https://stackoverflow.com/questions/45291832/extracting-a-file-extension-from-a-given-path-in-rust-idiomatically
 pub fn get_extension(filename: &str) -> Option<&str> {
     Path::new(filename).extension().and_then(OsStr::to_str)
 }
