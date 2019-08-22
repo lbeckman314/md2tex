@@ -1,4 +1,7 @@
 extern crate regex;
+#[macro_use]
+extern crate log;
+extern crate env_logger;
 
 use inflector::cases::kebabcase::to_kebab_case;
 use pulldown_cmark::{Event, Options, Parser, Tag};
@@ -33,6 +36,7 @@ pub struct CurrentType {
 
 /// Converts markdown string to latex string.
 pub fn markdown_to_latex(markdown: String) -> String {
+    env_logger::init();
     let mut output = String::new();
 
     let mut header_value = String::new();
@@ -51,8 +55,11 @@ pub fn markdown_to_latex(markdown: String) -> String {
 
     let parser = Parser::new_ext(&markdown, options);
 
+    let mut equation_mode = false;
+    let mut buffer = String::new();
+
     for event in parser {
-        println!("Event: {:?}", event);
+        debug!("Event: {:?}", event);
         match event {
             Event::Start(Tag::Header(level)) => {
                 current.event_type = EventType::Header;
@@ -66,7 +73,7 @@ pub fn markdown_to_latex(markdown: String) -> String {
                     3 => output.push_str("subsubsection{"),
                     4 => output.push_str("paragraph{"),
                     5 => output.push_str("subparagraph{"),
-                    _ => println!("header is out of range."),
+                    _ => error!("header is out of range."),
                 }
             }
             Event::End(Tag::Header(_)) => {
@@ -123,8 +130,8 @@ pub fn markdown_to_latex(markdown: String) -> String {
                         let _path = entry.path().to_str().unwrap();
                         let _url = &url.clone().into_string().replace("../", "");
                         if _path.ends_with(_url) {
-                            println!("{}", entry.path().display());
-                            println!("URL: {}", url);
+                            debug!("{}", entry.path().display());
+                            debug!("URL: {}", url);
 
                             let file = match fs::File::open(_path) {
                                 Ok(file) => file,
@@ -135,7 +142,7 @@ pub fn markdown_to_latex(markdown: String) -> String {
                             let title = title_string(buffer);
                             output.push_str(&title);
 
-                            println!("The`` title is '{}'", title);
+                            debug!("The`` title is '{}'", title);
 
                             found = true;
                             break;
@@ -147,7 +154,7 @@ pub fn markdown_to_latex(markdown: String) -> String {
                     }
 
                     output.push_str("]{");
-                }
+                    }
             }
 
             Event::End(Tag::Link(_, _, _)) => {
@@ -204,8 +211,8 @@ pub fn markdown_to_latex(markdown: String) -> String {
                 let mut cols = String::new();
                 for _i in 0..cells {
                     cols.push_str(&format!(
-                        r"C{{{width}\textwidth}} ",
-                        width = 1. / cells as f64
+                            r"C{{{width}\textwidth}} ",
+                            width = 1. / cells as f64
                     ));
                 }
                 output = output.replace("!!!", &cols);
@@ -216,7 +223,7 @@ pub fn markdown_to_latex(markdown: String) -> String {
             Event::Start(Tag::TableCell) => match current.event_type {
                 EventType::TableHead => {
                     output.push_str(r"\bfseries{");
-                }
+                    }
                 _ => (),
             },
 
@@ -293,13 +300,13 @@ pub fn markdown_to_latex(markdown: String) -> String {
                 match current.event_type {
                     EventType::Header => output.push_str(
                         &*t.replace("#", r"\#")
-                            .replace("…", "...")
-                            .replace("З", "3"),
+                        .replace("…", "...")
+                        .replace("З", "3"),
                     ),
                     _ => output.push_str(
                         &*t.replace("…", "...")
-                            .replace("З", "3")
-                            .replace("�", r"\�"),
+                        .replace("З", "3")
+                        .replace("�", r"\�"),
                     ),
                 }
                 output.push_str("|");
@@ -319,45 +326,85 @@ pub fn markdown_to_latex(markdown: String) -> String {
             }
 
             Event::Text(t) => {
-                println!("current_type: {:?}", current.event_type);
+                // if "\(" or "\[" are encountered, then begin equation 
+                // and don't replace any characters.
+                let delim_start = vec![r"\(", r"\["];
+                let delim_end = vec![r"\)", r"\]"];
+
+
+                if buffer.len() > 100 {
+                    buffer.clear();
+                }
+
+                buffer.push_str(&t.clone().into_string());
+
+                debug!("current_type: {:?}", current.event_type);
+                debug!("equation_mode: {:?}", equation_mode);
                 match current.event_type {
                     EventType::Strong
-                    | EventType::Emphasis
-                    | EventType::Text
-                    | EventType::Header => {
-                        // TODO more elegant way to do ordered `replace`s (structs?).
-                        output.push_str(
-                            &*t.replace(r"\", r"\\")
-                                .replace("&", r"\&")
-                                .replace(r"\s", r"\textbackslash{}s")
-                                .replace(r"\w", r"\textbackslash{}w")
-                                .replace("_", r"\_")
-                                .replace(r"\<", "<")
-                                .replace(r"%", "%")
-                                .replace(r"$", r"\$")
-                                .replace(r"—", "---")
-                                .replace("#", r"\#"),
-                        );
+                        | EventType::Emphasis
+                        | EventType::Text
+                        | EventType::Header => {
+                            // TODO more elegant way to do ordered `replace`s (structs?).
+                            if delim_start.into_iter().any(|element| buffer.contains(element)) {
+                                debug!("> Contains!");
+                                debug!("> t: {}", t);
+                                debug!("> buffer: {}", buffer);
+                                let popped = output.pop().unwrap(); 
+                                if popped != '\\' {
+                                    output.push(popped);
+                                }
+                                output.push_str(&*t);
+                                equation_mode = true;
+                            }
+                            else if delim_end.into_iter().any(|element| buffer.contains(element))
+                            || equation_mode == true {
+                                debug!("@ END");
+                                debug!("@ t: {}", t);
+                                debug!("@ buffer: {}", buffer);
+                                let popped = output.pop().unwrap(); 
+                                if popped != '\\' {
+                                    output.push(popped);
+                                }
+                                output.push_str(&*t);
+                                equation_mode = false;
+                            }
+                            else {
+                                debug!("! t: {}", t);
+                                debug!("! buffer: {}", buffer);
+                                output.push_str(
+                                    &*t.replace(r"\", r"\\")
+                                    .replace("&", r"\&")
+                                    .replace(r"\s", r"\textbackslash{}s")
+                                    .replace(r"\w", r"\textbackslash{}w")
+                                    .replace("_", r"\_")
+                                    .replace(r"\<", "<")
+                                    .replace(r"%", "%")
+                                    .replace(r"$", r"\$")
+                                    .replace(r"—", "---")
+                                    .replace("#", r"\#"),
+                                );
+                            }
                         header_value = t.into_string();
                     }
-                    _ => output.push_str(&*t),
-                }
+                _ => output.push_str(&*t),
             }
-
-            Event::SoftBreak => {
-                output.push('\n');
-            }
-
-            Event::HardBreak => {
-                output.push_str(r"\\");
-                output.push('\n');
-            }
-
-            _ => (),
         }
-    }
 
-    output
+        Event::SoftBreak => {
+            output.push('\n');
+        }
+
+        Event::HardBreak => {
+            output.push_str(r"\\");
+            output.push('\n');
+        }
+
+        _ => (),
+    }
+}
+
+output
 }
 
 /// Simple HTML parser.
@@ -374,7 +421,8 @@ pub fn html2tex(html: String, current: &CurrentType) -> String {
 
     // image html tags
     if latex.contains("<img") {
-        //let src = Regex::new(r#"src="(.*?)"#).unwrap();
+        // Regex doesn't yet support look aheads (.*?), so we'll use simple pattern matching.
+        // let src = Regex::new(r#"src="(.*?)"#).unwrap();
         let src = Regex::new(r#"src="([a-zA-Z0-9-/_.]*)"#).unwrap();
         let caps = src.captures(&latex).unwrap();
         let path_raw = caps.get(1).unwrap().as_str();
@@ -385,7 +433,7 @@ pub fn html2tex(html: String, current: &CurrentType) -> String {
         if get_extension(&path).unwrap() == "svg" {
             let img = svg2png(path.to_string()).unwrap();
             path = path.replace(".svg", ".png");
-            println!("path!: {}", &path);
+            debug!("path!: {}", &path);
             img.save(std::path::Path::new(&path));
         }
 
@@ -399,7 +447,7 @@ pub fn html2tex(html: String, current: &CurrentType) -> String {
         output.push_str(&path);
         output.push_str("}\n");
 
-    // all other tags
+        // all other tags
     } else {
         match current.event_type {
             EventType::Html => {
@@ -415,16 +463,17 @@ pub fn html2tex(html: String, current: &CurrentType) -> String {
             _ => {
                 latex = latex
                     .replace("/>", "")
+                    .replace("<code\n", "<code")
                     .replace("<code", r"\lstinline|")
                     .replace("</code>", r"|")
                     .replace("<span", "")
                     .replace(r"</span>", "");
-            }
+                }
         }
         // remove all HTML comments.
         let re = Regex::new(r"<!--.*-->").unwrap();
         output.push_str(&re.replace(&latex, ""));
-    }
+        }
 
     output
 }
@@ -457,7 +506,7 @@ where
 ///
 /// Example: foo.svg becomes foo.svg.png
 pub fn svg2png(filename: String) -> Option<Box<dyn OutputImage>> {
-    println!("svg2png path: {}", &filename);
+    debug!("svg2png path: {}", &filename);
     let mut opt = resvg::Options::default();
     opt.usvg.path = Some(filename.clone().into());
 
