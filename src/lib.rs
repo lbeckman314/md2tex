@@ -266,6 +266,7 @@ pub fn markdown_to_tex(markdown: String) -> String {
 
                     // create output directories.
                     let _ = fs::create_dir_all(&filename_png);
+                    let _ = fs::create_dir_all(Path::new(&filename_png).parent().unwrap());
 
                     img.save(std::path::Path::new(&filename_png));
                     path_str = filename_png.clone();
@@ -446,7 +447,7 @@ pub fn html2tex(html: String, current: &CurrentType) -> String {
             debug!("path!: {}", &path);
 
             // create output directories.
-            let _ = fs::create_dir_all(&path);
+            let _ = fs::create_dir_all(Path::new(&path).parent().unwrap());
 
             img.save(std::path::Path::new(&path));
         }
