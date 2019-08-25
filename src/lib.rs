@@ -453,14 +453,15 @@ pub fn html2tex(html: String, current: &CurrentType) -> String {
         }
 
         match current.event_type {
-            EventType::Table => output.push_str("\\includegraphics[width=0.2\\textwidth]{"),
+            EventType::Table => output.push_str(r"\begin{center}\includegraphics[width=0.2\textwidth]{"),
             _ => {
-                output.push_str("\\includegraphics[width=0.8\\textwidth]{");
+                output.push_str(r"\begin{center}\includegraphics[width=0.8\textwidth]{");
             }
         }
 
         output.push_str(&path);
-        output.push_str("}\n");
+        output.push_str(r"}\end{center}");
+        output.push_str("\n");
 
     // all other tags
     } else {
