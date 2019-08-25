@@ -34,8 +34,8 @@ pub struct CurrentType {
     event_type: EventType,
 }
 
-/// Converts markdown string to latex string.
-pub fn markdown_to_latex(markdown: String) -> String {
+/// Converts markdown string to tex string.
+pub fn markdown_to_tex(markdown: String) -> String {
     env_logger::init();
     let mut output = String::new();
 
@@ -154,7 +154,7 @@ pub fn markdown_to_latex(markdown: String) -> String {
                     }
 
                     output.push_str("]{");
-                    }
+                }
             }
 
             Event::End(Tag::Link(_, _, _)) => {
@@ -211,8 +211,8 @@ pub fn markdown_to_latex(markdown: String) -> String {
                 let mut cols = String::new();
                 for _i in 0..cells {
                     cols.push_str(&format!(
-                            r"C{{{width}\textwidth}} ",
-                            width = 1. / cells as f64
+                        r"C{{{width}\textwidth}} ",
+                        width = 1. / cells as f64
                     ));
                 }
                 output = output.replace("!!!", &cols);
@@ -223,7 +223,7 @@ pub fn markdown_to_latex(markdown: String) -> String {
             Event::Start(Tag::TableCell) => match current.event_type {
                 EventType::TableHead => {
                     output.push_str(r"\bfseries{");
-                    }
+                }
                 _ => (),
             },
 
@@ -261,6 +261,12 @@ pub fn markdown_to_latex(markdown: String) -> String {
 
                     let mut filename_png = String::from(path.clone().into_string());
                     filename_png = filename_png.replace(".svg", ".png");
+                    filename_png = filename_png.replace("../../", "");
+                    debug!("filename_png: {}", filename_png);
+
+                    // create output directories.
+                    let _ = fs::create_dir_all(&filename_png);
+
                     img.save(std::path::Path::new(&filename_png));
                     path_str = filename_png.clone();
                 }
@@ -300,37 +306,36 @@ pub fn markdown_to_latex(markdown: String) -> String {
                 match current.event_type {
                     EventType::Header => output.push_str(
                         &*t.replace("#", r"\#")
-                        .replace("…", "...")
-                        .replace("З", "3"),
+                            .replace("…", "...")
+                            .replace("З", "3"),
                     ),
                     _ => output.push_str(
                         &*t.replace("…", "...")
-                        .replace("З", "3")
-                        .replace("�", r"\�"),
+                            .replace("З", "3")
+                            .replace("�", r"\�"),
                     ),
                 }
                 output.push_str("|");
             }
 
             Event::InlineHtml(t) => {
-                // convert common html patterns to latex
+                // convert common html patterns to tex
                 output.push_str(&html2tex(t.into_string(), &current));
                 current.event_type = EventType::Text;
             }
 
             Event::Html(t) => {
                 current.event_type = EventType::Html;
-                // convert common html patterns to latex
+                // convert common html patterns to tex
                 output.push_str(&html2tex(t.into_string(), &current));
                 current.event_type = EventType::Text;
             }
 
             Event::Text(t) => {
-                // if "\(" or "\[" are encountered, then begin equation 
+                // if "\(" or "\[" are encountered, then begin equation
                 // and don't replace any characters.
                 let delim_start = vec![r"\(", r"\["];
                 let delim_end = vec![r"\)", r"\]"];
-
 
                 if buffer.len() > 100 {
                     buffer.clear();
@@ -342,38 +347,42 @@ pub fn markdown_to_latex(markdown: String) -> String {
                 debug!("equation_mode: {:?}", equation_mode);
                 match current.event_type {
                     EventType::Strong
-                        | EventType::Emphasis
-                        | EventType::Text
-                        | EventType::Header => {
-                            // TODO more elegant way to do ordered `replace`s (structs?).
-                            if delim_start.into_iter().any(|element| buffer.contains(element)) {
-                                debug!("> Contains!");
-                                debug!("> t: {}", t);
-                                debug!("> buffer: {}", buffer);
-                                let popped = output.pop().unwrap(); 
-                                if popped != '\\' {
-                                    output.push(popped);
-                                }
-                                output.push_str(&*t);
-                                equation_mode = true;
+                    | EventType::Emphasis
+                    | EventType::Text
+                    | EventType::Header => {
+                        // TODO more elegant way to do ordered `replace`s (structs?).
+                        if delim_start
+                            .into_iter()
+                            .any(|element| buffer.contains(element))
+                        {
+                            debug!("> Contains!");
+                            debug!("> t: {}", t);
+                            debug!("> buffer: {}", buffer);
+                            let popped = output.pop().unwrap();
+                            if popped != '\\' {
+                                output.push(popped);
                             }
-                            else if delim_end.into_iter().any(|element| buffer.contains(element))
-                            || equation_mode == true {
-                                debug!("@ END");
-                                debug!("@ t: {}", t);
-                                debug!("@ buffer: {}", buffer);
-                                let popped = output.pop().unwrap(); 
-                                if popped != '\\' {
-                                    output.push(popped);
-                                }
-                                output.push_str(&*t);
-                                equation_mode = false;
+                            output.push_str(&*t);
+                            equation_mode = true;
+                        } else if delim_end
+                            .into_iter()
+                            .any(|element| buffer.contains(element))
+                            || equation_mode == true
+                        {
+                            debug!("@ END");
+                            debug!("@ t: {}", t);
+                            debug!("@ buffer: {}", buffer);
+                            let popped = output.pop().unwrap();
+                            if popped != '\\' {
+                                output.push(popped);
                             }
-                            else {
-                                debug!("! t: {}", t);
-                                debug!("! buffer: {}", buffer);
-                                output.push_str(
-                                    &*t.replace(r"\", r"\\")
+                            output.push_str(&*t);
+                            equation_mode = false;
+                        } else {
+                            debug!("! t: {}", t);
+                            debug!("! buffer: {}", buffer);
+                            output.push_str(
+                                &*t.replace(r"\", r"\\")
                                     .replace("&", r"\&")
                                     .replace(r"\s", r"\textbackslash{}s")
                                     .replace(r"\w", r"\textbackslash{}w")
@@ -383,48 +392,48 @@ pub fn markdown_to_latex(markdown: String) -> String {
                                     .replace(r"$", r"\$")
                                     .replace(r"—", "---")
                                     .replace("#", r"\#"),
-                                );
-                            }
+                            );
+                        }
                         header_value = t.into_string();
                     }
-                _ => output.push_str(&*t),
+                    _ => output.push_str(&*t),
+                }
             }
-        }
 
-        Event::SoftBreak => {
-            output.push('\n');
-        }
+            Event::SoftBreak => {
+                output.push('\n');
+            }
 
-        Event::HardBreak => {
-            output.push_str(r"\\");
-            output.push('\n');
-        }
+            Event::HardBreak => {
+                output.push_str(r"\\");
+                output.push('\n');
+            }
 
-        _ => (),
+            _ => (),
+        }
     }
-}
 
-output
+    output
 }
 
 /// Simple HTML parser.
 ///
-/// Eventually I hope to use a mature HTML to LaTeX parser.
+/// Eventually I hope to use a mature HTML to tex parser.
 /// Something along the lines of https://github.com/Adonai/html2md/
 pub fn html2tex(html: String, current: &CurrentType) -> String {
-    let mut latex = html;
+    let mut tex = html;
     let mut output = String::new();
 
     // remove all "class=foo" and "id=bar".
     let re = Regex::new(r#"\s(class|id)="[a-zA-Z0-9-_]*">"#).unwrap();
-    latex = re.replace(&latex, "").to_string();
+    tex = re.replace(&tex, "").to_string();
 
     // image html tags
-    if latex.contains("<img") {
+    if tex.contains("<img") {
         // Regex doesn't yet support look aheads (.*?), so we'll use simple pattern matching.
         // let src = Regex::new(r#"src="(.*?)"#).unwrap();
         let src = Regex::new(r#"src="([a-zA-Z0-9-/_.]*)"#).unwrap();
-        let caps = src.captures(&latex).unwrap();
+        let caps = src.captures(&tex).unwrap();
         let path_raw = caps.get(1).unwrap().as_str();
         let mut path = format!("../../src/{path}", path = path_raw);
 
@@ -433,7 +442,12 @@ pub fn html2tex(html: String, current: &CurrentType) -> String {
         if get_extension(&path).unwrap() == "svg" {
             let img = svg2png(path.to_string()).unwrap();
             path = path.replace(".svg", ".png");
+            path = path.replace("../../", "");
             debug!("path!: {}", &path);
+
+            // create output directories.
+            let _ = fs::create_dir_all(&path);
+
             img.save(std::path::Path::new(&path));
         }
 
@@ -447,13 +461,13 @@ pub fn html2tex(html: String, current: &CurrentType) -> String {
         output.push_str(&path);
         output.push_str("}\n");
 
-        // all other tags
+    // all other tags
     } else {
         match current.event_type {
             EventType::Html => {
                 let mut lang = String::new();
 
-                latex = latex
+                tex = tex
                     .replace("/>", "")
                     .replace("<code class=\"language-", &lang)
                     .replace("</code>", r"\\end{lstlisting}")
@@ -461,19 +475,19 @@ pub fn html2tex(html: String, current: &CurrentType) -> String {
                     .replace(r"</span>", "")
             }
             _ => {
-                latex = latex
+                tex = tex
                     .replace("/>", "")
                     .replace("<code\n", "<code")
                     .replace("<code", r"\lstinline|")
                     .replace("</code>", r"|")
                     .replace("<span", "")
                     .replace(r"</span>", "");
-                }
+            }
         }
         // remove all HTML comments.
         let re = Regex::new(r"<!--.*-->").unwrap();
-        output.push_str(&re.replace(&latex, ""));
-        }
+        output.push_str(&re.replace(&tex, ""));
+    }
 
     output
 }
