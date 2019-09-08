@@ -118,14 +118,17 @@ pub fn markdown_to_tex(markdown: String) -> String {
             }
 
             Event::Start(Tag::Link(_, url, _)) => {
+                // URL link (e.g. "https://nasa.gov/my/cool/figure.png")
                 if url.starts_with("http") {
                     output.push_str("\\href{");
                     output.push_str(&*url);
                     output.push_str("}{");
+                // local link (e.g. "my/cool/figure.png")
                 } else {
                     output.push_str("\\hyperref[");
                     let mut found = false;
 
+                    // iterate through `src` directory to find the resource.
                     for entry in WalkDir::new("../../src").into_iter().filter_map(|e| e.ok()) {
                         let _path = entry.path().to_str().unwrap();
                         let _url = &url.clone().into_string().replace("../", "");
@@ -356,9 +359,6 @@ pub fn markdown_to_tex(markdown: String) -> String {
                             .into_iter()
                             .any(|element| buffer.contains(element))
                         {
-                            debug!("> Contains!");
-                            debug!("> t: {}", t);
-                            debug!("> buffer: {}", buffer);
                             let popped = output.pop().unwrap();
                             if popped != '\\' {
                                 output.push(popped);
@@ -370,9 +370,6 @@ pub fn markdown_to_tex(markdown: String) -> String {
                             .any(|element| buffer.contains(element))
                             || equation_mode == true
                         {
-                            debug!("@ END");
-                            debug!("@ t: {}", t);
-                            debug!("@ buffer: {}", buffer);
                             let popped = output.pop().unwrap();
                             if popped != '\\' {
                                 output.push(popped);
@@ -380,8 +377,6 @@ pub fn markdown_to_tex(markdown: String) -> String {
                             output.push_str(&*t);
                             equation_mode = false;
                         } else {
-                            debug!("! t: {}", t);
-                            debug!("! buffer: {}", buffer);
                             output.push_str(
                                 &*t.replace(r"\", r"\\")
                                     .replace("&", r"\&")
@@ -466,16 +461,18 @@ pub fn html2tex(html: String, current: &CurrentType) -> String {
     // all other tags
     } else {
         match current.event_type {
+            // block code
             EventType::Html => {
-                let mut lang = String::new();
+                tex = parse_html_table(tex);
 
                 tex = tex
                     .replace("/>", "")
-                    .replace("<code class=\"language-", &lang)
+                    .replace("<code class=\"language-", "\\begin{lstlisting}")
                     .replace("</code>", r"\\end{lstlisting}")
                     .replace("<span", "")
                     .replace(r"</span>", "")
             }
+            // inline code
             _ => {
                 tex = tex
                     .replace("/>", "")
@@ -493,6 +490,14 @@ pub fn html2tex(html: String, current: &CurrentType) -> String {
 
     output
 }
+
+
+/// Convert HTML table elements into LaTeX equivalents.
+pub fn parse_html_table(tex: String) -> String {
+    let tableized = tex;
+    tableized
+}
+
 
 /// Get the title of a Markdown file.
 ///
