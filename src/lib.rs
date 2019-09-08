@@ -1,4 +1,6 @@
+extern crate html2md;
 extern crate regex;
+use html2md::parse_html;
 #[macro_use]
 extern crate log;
 extern crate env_logger;
@@ -36,7 +38,7 @@ pub struct CurrentType {
 
 /// Converts markdown string to tex string.
 pub fn markdown_to_tex(markdown: String) -> String {
-    env_logger::init();
+    //env_logger::init();
     let mut output = String::new();
 
     let mut header_value = String::new();
@@ -331,7 +333,7 @@ pub fn markdown_to_tex(markdown: String) -> String {
             Event::Html(t) => {
                 current.event_type = EventType::Html;
                 // convert common html patterns to tex
-                output.push_str(&html2tex(t.into_string(), &current));
+                output.push_str(markdown_to_tex(parse_html(&t.into_string())).as_str());
                 current.event_type = EventType::Text;
             }
 
@@ -448,7 +450,9 @@ pub fn html2tex(html: String, current: &CurrentType) -> String {
         }
 
         match current.event_type {
-            EventType::Table => output.push_str(r"\begin{center}\includegraphics[width=0.2\textwidth]{"),
+            EventType::Table => {
+                output.push_str(r"\begin{center}\includegraphics[width=0.2\textwidth]{")
+            }
             _ => {
                 output.push_str(r"\begin{center}\includegraphics[width=0.8\textwidth]{");
             }
@@ -463,7 +467,7 @@ pub fn html2tex(html: String, current: &CurrentType) -> String {
         match current.event_type {
             // block code
             EventType::Html => {
-                tex = parse_html_table(tex);
+                tex = parse_html_description(tex);
 
                 tex = tex
                     .replace("/>", "")
@@ -491,13 +495,11 @@ pub fn html2tex(html: String, current: &CurrentType) -> String {
     output
 }
 
-
-/// Convert HTML table elements into LaTeX equivalents.
-pub fn parse_html_table(tex: String) -> String {
-    let tableized = tex;
-    tableized
+/// Convert HTML description elements into LaTeX equivalents.
+pub fn parse_html_description(tex: String) -> String {
+    let descriptionized = tex;
+    descriptionized
 }
-
 
 /// Get the title of a Markdown file.
 ///

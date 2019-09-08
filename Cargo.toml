@@ -19,6 +19,7 @@ regex = "1.2.1"
 raqote = "0.6.1"
 log = "0.4.8"
 env_logger = "0.6.2"
+html2md = "0.2.9"
 
 [dependencies.resvg]
 version = "0.7.0"

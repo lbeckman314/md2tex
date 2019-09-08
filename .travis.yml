@@ -1,0 +1,14 @@
+language: rust
+
+dist: 
+  - bionic
+
+rust:
+  - stable
+
+cache:
+  - cargo
+
+script:
+  - cargo build
+  - cargo test
