@@ -46,6 +46,9 @@ pub fn markdown_to_tex(markdown: String) -> String {
     let mut current: CurrentType = CurrentType {
         event_type: EventType::Text,
     };
+
+    let mut codeInHtml = false;
+
     let mut cells = 0;
 
     let mut options = Options::empty();
@@ -61,7 +64,7 @@ pub fn markdown_to_tex(markdown: String) -> String {
     let mut buffer = String::new();
 
     for event in parser {
-        debug!("Event: {:?}", event);
+        println!("Event: {:?}", event);
         match event {
             Event::Start(Tag::Header(level)) => {
                 current.event_type = EventType::Header;
@@ -255,6 +258,7 @@ pub fn markdown_to_tex(markdown: String) -> String {
                 output.push_str("\n");
             }
 
+            // Images
             Event::Start(Tag::Image(_, path, title)) => {
                 let mut path_str = String::new();
                 path_str = path.clone().into_string();
@@ -287,9 +291,11 @@ pub fn markdown_to_tex(markdown: String) -> String {
                 output.push_str("}\n\\end{figure}\n");
             }
 
+            // Items (bullet points)
             Event::Start(Tag::Item) => output.push_str("\\item "),
             Event::End(Tag::Item) => output.push_str("\n"),
 
+            // Codeblocks
             Event::Start(Tag::CodeBlock(lang)) => {
                 let re = Regex::new(r",.*").unwrap();
                 current.event_type = EventType::Code;
@@ -307,6 +313,7 @@ pub fn markdown_to_tex(markdown: String) -> String {
                 current.event_type = EventType::Text;
             }
 
+            // Inline Code
             Event::Code(t) => {
                 output.push_str("\\lstinline|");
                 match current.event_type {
@@ -326,14 +333,13 @@ pub fn markdown_to_tex(markdown: String) -> String {
 
             Event::InlineHtml(t) => {
                 // convert common html patterns to tex
-                output.push_str(&html2tex(t.into_string(), &current));
+                output.push_str(&html2tex(t.into_string(), &current, &mut codeInHtml));
                 current.event_type = EventType::Text;
             }
 
             Event::Html(t) => {
-                current.event_type = EventType::Html;
-                // convert common html patterns to tex
-                output.push_str(markdown_to_tex(parse_html(&t.into_string())).as_str());
+                //output.push_str(markdown_to_tex(parse_html(&t.into_string())).as_str());
+                output.push_str(&html2tex(t.into_string(), &current, &mut codeInHtml));
                 current.event_type = EventType::Text;
             }
 
@@ -418,87 +424,111 @@ pub fn markdown_to_tex(markdown: String) -> String {
 ///
 /// Eventually I hope to use a mature HTML to tex parser.
 /// Something along the lines of https://github.com/Adonai/html2md/
-pub fn html2tex(html: String, current: &CurrentType) -> String {
+pub fn html2tex(html: String, mut current: &CurrentType, codeInHtml: &mut bool) -> String {
     let mut tex = html;
     let mut output = String::new();
 
-    // remove all "class=foo" and "id=bar".
-    let re = Regex::new(r#"\s(class|id)="[a-zA-Z0-9-_]*">"#).unwrap();
-    tex = re.replace(&tex, "").to_string();
+    // if a </pre> or </code> tag are encountered, then...
+    if tex.contains("</pre") || tex.contains("</code") {
+        // remove the matching </pre>/</code> tag and end codeblock
+        let re = Regex::new(r"<(/pre|/code).*>").unwrap();
+        tex = re.replace(&tex, r"\end{lstlisting}").to_string();
 
-    // image html tags
-    if tex.contains("<img") {
-        // Regex doesn't yet support look aheads (.*?), so we'll use simple pattern matching.
-        // let src = Regex::new(r#"src="(.*?)"#).unwrap();
-        let src = Regex::new(r#"src="([a-zA-Z0-9-/_.]*)"#).unwrap();
-        let caps = src.captures(&tex).unwrap();
-        let path_raw = caps.get(1).unwrap().as_str();
-        let mut path = format!("../../src/{path}", path = path_raw);
+        // flip CodeInHtml switch
+        *codeInHtml = false;
 
-        // if path ends with ".svg", run it through
-        // svg2png to convert to png file.
-        if get_extension(&path).unwrap() == "svg" {
-            let img = svg2png(path.to_string()).unwrap();
-            path = path.replace(".svg", ".png");
-            path = path.replace("../../", "");
-            debug!("path!: {}", &path);
-
-            // create output directories.
-            let _ = fs::create_dir_all(Path::new(&path).parent().unwrap());
-
-            img.save(std::path::Path::new(&path));
-        }
-
-        match current.event_type {
-            EventType::Table => {
-                output.push_str(r"\begin{center}\includegraphics[width=0.2\textwidth]{")
-            }
-            _ => {
-                output.push_str(r"\begin{center}\includegraphics[width=0.8\textwidth]{");
-            }
-        }
-
-        output.push_str(&path);
-        output.push_str(r"}\end{center}");
-        output.push_str("\n");
-
-    // all other tags
-    } else {
-        match current.event_type {
-            // block code
-            EventType::Html => {
-                tex = parse_html_description(tex);
-
-                tex = tex
-                    .replace("/>", "")
-                    .replace("<code class=\"language-", "\\begin{lstlisting}")
-                    .replace("</code>", r"\\end{lstlisting}")
-                    .replace("<span", "")
-                    .replace(r"</span>", "")
-            }
-            // inline code
-            _ => {
-                tex = tex
-                    .replace("/>", "")
-                    .replace("<code\n", "<code")
-                    .replace("<code", r"\lstinline|")
-                    .replace("</code>", r"|")
-                    .replace("<span", "")
-                    .replace(r"</span>", "");
-            }
-        }
-        // remove all HTML comments.
-        let re = Regex::new(r"<!--.*-->").unwrap();
+        // push string and skip any further alterations
         output.push_str(&re.replace(&tex, ""));
+        output
     }
+    // if an HTML-defined codeblock is currently in effect,
+    // then return the html verbatim (no alterations).
+    else if *codeInHtml {
+        tex
+    }
+    // if a <pre> or <code> tag are encountered, then...
+    else if tex.contains("<pre") || tex.contains("<code") {
+        // remove the initial <pre>/<code> tag and begin codeblock
+        let re = Regex::new(r"<(pre|code).*>").unwrap();
+        tex = re.replace(&tex, r"\begin{lstlisting}").to_string();
 
-    output
-}
+        // flip CodeInHtml switch
+        *codeInHtml = true;
 
-/// Convert HTML description elements into LaTeX equivalents.
-pub fn parse_html_description(tex: String) -> String {
-    let descriptionized = tex;
-    descriptionized
+        // push string and skip any further alterations
+        output.push_str(&re.replace(&tex, ""));
+        output
+    } else {
+        // remove all "class=foo" and "id=bar".
+        let re = Regex::new(r#"\s(class|id)="[a-zA-Z0-9-_]*">"#).unwrap();
+        tex = re.replace(&tex, "").to_string();
+
+        // image html tags
+        if tex.contains("<img") {
+            // Regex doesn't yet support look aheads (.*?), so we'll use simple pattern matching.
+            // let src = Regex::new(r#"src="(.*?)"#).unwrap();
+            let src = Regex::new(r#"src="([a-zA-Z0-9-/_.]*)"#).unwrap();
+            let caps = src.captures(&tex).unwrap();
+            let path_raw = caps.get(1).unwrap().as_str();
+            let mut path = format!("../../src/{path}", path = path_raw);
+
+            // if path ends with ".svg", run it through
+            // svg2png to convert to png file.
+            if get_extension(&path).unwrap() == "svg" {
+                let img = svg2png(path.to_string()).unwrap();
+                path = path.replace(".svg", ".png");
+                path = path.replace("../../", "");
+                debug!("path!: {}", &path);
+
+                // create output directories.
+                let _ = fs::create_dir_all(Path::new(&path).parent().unwrap());
+
+                img.save(std::path::Path::new(&path));
+            }
+
+            match current.event_type {
+                EventType::Table => {
+                    output.push_str(r"\begin{center}\includegraphics[width=0.2\textwidth]{")
+                }
+                _ => {
+                    output.push_str(r"\begin{center}\includegraphics[width=0.8\textwidth]{");
+                }
+            }
+
+            output.push_str(&path);
+            output.push_str(r"}\end{center}");
+            output.push_str("\n");
+
+        // all other tags
+        } else {
+            match current.event_type {
+                // block HTML
+                EventType::Html => {
+                    tex = tex
+                        .replace("/>", "")
+                        .replace("<code class=\"language-", "\\begin{lstlisting}")
+                        .replace("</code>", r"\\end{lstlisting}")
+                        .replace("<span", "")
+                        .replace(r"</span>", "")
+                }
+                // inline HTML
+                _ => {
+                    tex = tex
+                        .replace("/>", "")
+                        .replace("<code\n", "<code")
+                        .replace("<code", r"\lstinline|")
+                        .replace("</code>", r"|")
+                        .replace("<span", "")
+                        .replace(r"</span>", "");
+                }
+            }
+            // remove all HTML comments.
+            let re = Regex::new(r"<!--.*-->").unwrap();
+            output.push_str(&re.replace(&tex, ""));
+        }
+
+        output
+    }
 }
 
 /// Get the title of a Markdown file.
