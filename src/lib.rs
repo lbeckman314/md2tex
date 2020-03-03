@@ -279,7 +279,7 @@ pub fn markdown_to_tex(markdown: String) -> String {
 
                 output.push_str("\\begin{figure}\n");
                 output.push_str("\\centering\n");
-                output.push_str("\\includegraphics[width=\\textwidth]{");;
+                output.push_str("\\includegraphics[width=\\textwidth]{");
                 output.push_str(&format!("../../src/{path}", path = path_str));
                 output.push_str("}\n");
                 output.push_str("\\caption{");
@@ -343,6 +343,7 @@ pub fn markdown_to_tex(markdown: String) -> String {
                 let delim_start = vec![r"\(", r"\["];
                 let delim_end = vec![r"\)", r"\]"];
 
+
                 if buffer.len() > 100 {
                     buffer.clear();
                 }
@@ -355,7 +356,8 @@ pub fn markdown_to_tex(markdown: String) -> String {
                     EventType::Strong
                     | EventType::Emphasis
                     | EventType::Text
-                    | EventType::Header => {
+                    | EventType::Header
+                    | EventType::Table => {
                         // TODO more elegant way to do ordered `replace`s (structs?).
                         if delim_start
                             .into_iter()
@@ -386,7 +388,7 @@ pub fn markdown_to_tex(markdown: String) -> String {
                                     .replace(r"\w", r"\textbackslash{}w")
                                     .replace("_", r"\_")
                                     .replace(r"\<", "<")
-                                    .replace(r"%", "%")
+                                    .replace(r"%", r"\%")
                                     .replace(r"$", r"\$")
                                     .replace(r"—", "---")
                                     .replace("#", r"\#"),
