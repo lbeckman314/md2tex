@@ -11,6 +11,7 @@ use regex::Regex;
 use resvg::prelude::*;
 use std::default::Default;
 use std::ffi::OsStr;
+use std::env;
 use std::fs;
 use std::io::BufRead;
 use std::io::BufReader;
@@ -48,7 +49,7 @@ pub fn markdown_to_tex(markdown: String) -> String {
     };
     let mut cells = 0;
 
-    let mut options = Options::empty();
+    let mut options = Options::empty();cd
     options.insert(Options::FIRST_PASS);
     options.insert(Options::ENABLE_STRIKETHROUGH);
     options.insert(Options::ENABLE_FOOTNOTES);
@@ -61,7 +62,6 @@ pub fn markdown_to_tex(markdown: String) -> String {
     let mut buffer = String::new();
 
     for event in parser {
-        debug!("Event: {:?}", event);
         match event {
             Event::Start(Tag::Header(level)) => {
                 current.event_type = EventType::Header;
@@ -131,12 +131,12 @@ pub fn markdown_to_tex(markdown: String) -> String {
                     let mut found = false;
 
                     // iterate through `src` directory to find the resource.
-                    for entry in WalkDir::new("../../src").into_iter().filter_map(|e| e.ok()) {
+                    let current = env::current_dir().unwrap();
+                    let src = current.parent()
+                    for entry in WalkDir::new("src").into_iter().filter_map(|e| e.ok()) {
                         let _path = entry.path().to_str().unwrap();
                         let _url = &url.clone().into_string().replace("../", "");
                         if _path.ends_with(_url) {
-                            debug!("{}", entry.path().display());
-                            debug!("URL: {}", url);
 
                             let file = match fs::File::open(_path) {
                                 Ok(file) => file,
@@ -146,8 +146,6 @@ pub fn markdown_to_tex(markdown: String) -> String {
 
                             let title = title_string(buffer);
                             output.push_str(&title);
-
-                            debug!("The`` title is '{}'", title);
 
                             found = true;
                             break;
@@ -267,7 +265,6 @@ pub fn markdown_to_tex(markdown: String) -> String {
                     let mut filename_png = String::from(path.clone().into_string());
                     filename_png = filename_png.replace(".svg", ".png");
                     filename_png = filename_png.replace("../../", "");
-                    debug!("filename_png: {}", filename_png);
 
                     // create output directories.
                     let _ = fs::create_dir_all(&filename_png);
@@ -279,7 +276,7 @@ pub fn markdown_to_tex(markdown: String) -> String {
 
                 output.push_str("\\begin{figure}\n");
                 output.push_str("\\centering\n");
-                output.push_str("\\includegraphics[width=\\textwidth]{");;
+                output.push_str("\\includegraphics[width=\\textwidth]{");
                 output.push_str(&format!("../../src/{path}", path = path_str));
                 output.push_str("}\n");
                 output.push_str("\\caption{");
@@ -310,16 +307,10 @@ pub fn markdown_to_tex(markdown: String) -> String {
             Event::Code(t) => {
                 output.push_str("\\lstinline|");
                 match current.event_type {
-                    EventType::Header => output.push_str(
-                        &*t.replace("#", r"\#")
-                            .replace("…", "...")
-                            .replace("З", "3"),
-                    ),
-                    _ => output.push_str(
-                        &*t.replace("…", "...")
-                            .replace("З", "3")
-                            .replace("�", r"\�"),
-                    ),
+                    EventType::Header => output
+                        .push_str(&*t.replace("#", r"\#").replace("…", "...").replace("З", "3")),
+                    _ => output
+                        .push_str(&*t.replace("…", "...").replace("З", "3").replace("�", r"\�")),
                 }
                 output.push_str("|");
             }
@@ -349,8 +340,6 @@ pub fn markdown_to_tex(markdown: String) -> String {
 
                 buffer.push_str(&t.clone().into_string());
 
-                debug!("current_type: {:?}", current.event_type);
-                debug!("equation_mode: {:?}", equation_mode);
                 match current.event_type {
                     EventType::Strong
                     | EventType::Emphasis
@@ -416,7 +405,7 @@ pub fn markdown_to_tex(markdown: String) -> String {
 
 /// Simple HTML parser.
 ///
-/// Eventually I hope to use a mature HTML to tex parser.
+/// Eventually I hope to use a mature 'HTML to tex' parser.
 /// Something along the lines of https://github.com/Adonai/html2md/
 pub fn html2tex(html: String, current: &CurrentType) -> String {
     let mut tex = html;
@@ -441,7 +430,6 @@ pub fn html2tex(html: String, current: &CurrentType) -> String {
             let img = svg2png(path.to_string()).unwrap();
             path = path.replace(".svg", ".png");
             path = path.replace("../../", "");
-            debug!("path!: {}", &path);
 
             // create output directories.
             let _ = fs::create_dir_all(Path::new(&path).parent().unwrap());
@@ -467,8 +455,6 @@ pub fn html2tex(html: String, current: &CurrentType) -> String {
         match current.event_type {
             // block code
             EventType::Html => {
-                tex = parse_html_description(tex);
-
                 tex = tex
                     .replace("/>", "")
                     .replace("<code class=\"language-", "\\begin{lstlisting}")
@@ -495,41 +481,10 @@ pub fn html2tex(html: String, current: &CurrentType) -> String {
     output
 }
 
-/// Convert HTML description elements into LaTeX equivalents.
-pub fn parse_html_description(tex: String) -> String {
-    let descriptionized = tex;
-    descriptionized
-}
-
-/// Get the title of a Markdown file.
-///
-/// Reads the first line of a Markdown file, strips any hashes and
-/// leading/trailing whitespace, and returns the title.
-/// Source: https://codereview.stackexchange.com/questions/135013/rust-function-to-read-the-first-line-of-a-file-strip-leading-hashes-and-whitesp
-pub fn title_string<R>(mut rdr: R) -> String
-where
-    R: BufRead,
-{
-    let mut first_line = String::new();
-
-    rdr.read_line(&mut first_line).expect("Unable to read line");
-
-    // Where do the leading hashes stop?
-    let last_hash = first_line
-        .char_indices()
-        .skip_while(|&(_, c)| c == '#')
-        .next()
-        .map_or(0, |(idx, _)| idx);
-
-    // Trim the leading hashes and any whitespace
-    first_line[last_hash..].trim().into()
-}
-
 /// Converts an SVG file to a PNG file.
 ///
 /// Example: foo.svg becomes foo.svg.png
 pub fn svg2png(filename: String) -> Option<Box<dyn OutputImage>> {
-    debug!("svg2png path: {}", &filename);
     let mut opt = resvg::Options::default();
     opt.usvg.path = Some(filename.clone().into());
 
@@ -540,8 +495,19 @@ pub fn svg2png(filename: String) -> Option<Box<dyn OutputImage>> {
 }
 
 /// Extract extension from filename
-///
-/// Source:  https://stackoverflow.com/questions/45291832/extracting-a-file-extension-from-a-given-path-in-rust-idiomatically
 pub fn get_extension(filename: &str) -> Option<&str> {
     Path::new(filename).extension().and_then(OsStr::to_str)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn svg2png_test() {
+        assert!(true)
+    }
+
+    #[test]
+    fn get_extension_test() {
+        assert!(true)
+    }
 }
