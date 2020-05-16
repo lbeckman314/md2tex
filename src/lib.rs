@@ -17,6 +17,11 @@ use std::io::BufReader;
 use std::path::Path;
 use std::string::String;
 use walkdir::WalkDir;
+use syntect::easy::HighlightLines;
+use syntect::parsing::SyntaxSet;
+use syntect::highlighting::{ThemeSet, Style};
+use syntect::util::{as_24_bit_terminal_escaped, LinesWithEndings};
+
 
 /// Used to keep track of current pulldown_cmark "event".
 /// TODO: Is there a native pulldown_cmark method to do this?
@@ -62,6 +67,10 @@ pub fn markdown_to_tex(markdown: String) -> String {
 
     let mut equation_mode = false;
     let mut buffer = String::new();
+
+    // Load these once at the start of your program
+    let ps = SyntaxSet::load_defaults_newlines();
+    let ts = ThemeSet::load_defaults();
 
     for event in parser {
         println!("Event: {:?}", event);
@@ -138,9 +147,6 @@ pub fn markdown_to_tex(markdown: String) -> String {
                         let _path = entry.path().to_str().unwrap();
                         let _url = &url.clone().into_string().replace("../", "");
                         if _path.ends_with(_url) {
-                            debug!("{}", entry.path().display());
-                            debug!("URL: {}", url);
-
                             let file = match fs::File::open(_path) {
                                 Ok(file) => file,
                                 Err(_) => panic!("Unable to read title from {}", _path),
@@ -149,8 +155,6 @@ pub fn markdown_to_tex(markdown: String) -> String {
 
                             let title = title_string(buffer);
                             output.push_str(&title);
-
-                            debug!("The`` title is '{}'", title);
 
                             found = true;
                             break;
@@ -420,6 +424,16 @@ pub fn markdown_to_tex(markdown: String) -> String {
     output
 }
 
+pun fn highlight(s: String) {
+    let syntax = ps.find_syntax_by_extension("rs").unwrap();
+    let mut h = HighlightLines::new(syntax, &ts.themes["base16-ocean.dark"]);
+    for line in LinesWithEndings::from(s) { // LinesWithEndings enables use of newlines mode
+        let ranges: Vec<(Style, &str)> = h.highlight(line, &ps);
+        let escaped = as_24_bit_terminal_escaped(&ranges[..], true);
+        escaped
+    }
+}
+
 /// Simple HTML parser.
 ///
 /// Eventually I hope to use a mature HTML to tex parser.
@@ -428,11 +442,18 @@ pub fn html2tex(html: String, mut current: &CurrentType, codeInHtml: &mut bool) 
     let mut tex = html;
     let mut output = String::new();
 
-    // if a </pre> or </code> tag are encountered, then...
+    // if a closing </pre> or </code> tag is encountered, then...
     if tex.contains("</pre") || tex.contains("</code") {
         // remove the matching </pre>/</code> tag and end codeblock
-        let re = Regex::new(r"<(/pre|/code).*>").unwrap();
+        let mut re = Regex::new(r"<(/pre|/code).*>").unwrap();
         tex = re.replace(&tex, r"\end{lstlisting}").to_string();
+
+        // if an opening <pre> or <code> tag is encountered, then...
+        if tex.contains("<pre") || tex.contains("<code") {
+            // remove the initial <pre>/<code> tag and begin codeblock
+            re = Regex::new(r"<(pre|code).*>").unwrap();
+            tex = re.replace(&tex, r"\begin{lstlisting}").to_string();
+        }
 
         // flip CodeInHtml switch
         *codeInHtml = false;
@@ -441,12 +462,14 @@ pub fn html2tex(html: String, mut current: &CurrentType, codeInHtml: &mut bool) 
         output.push_str(&re.replace(&tex, ""));
         output
     }
+
     // if an HTML-defined codeblock is currently in effect,
     // then return the html verbatim (no alterations).
     else if *codeInHtml {
         tex
     }
-    // if a <pre> or <code> tag are encountered, then...
+
+    // if an opening <pre> or <code> tag is encountered, then...
     else if tex.contains("<pre") || tex.contains("<code") {
         // remove the initial <pre>/<code> tag and begin codeblock
         let re = Regex::new(r"<(pre|code).*>").unwrap();
@@ -458,7 +481,9 @@ pub fn html2tex(html: String, mut current: &CurrentType, codeInHtml: &mut bool) 
         // push string and skip any further alterations
         output.push_str(&re.replace(&tex, ""));
         output
-    } else {
+    } 
+
+    else {
         // remove all "class=foo" and "id=bar".
         let re = Regex::new(r#"\s(class|id)="[a-zA-Z0-9-_]*">"#).unwrap();
         tex = re.replace(&tex, "").to_string();
@@ -501,29 +526,7 @@ pub fn html2tex(html: String, mut current: &CurrentType, codeInHtml: &mut bool) 
 
         // all other tags
         } else {
-            match current.event_type {
-                // block HTML
-                EventType::Html => {
-                    tex = tex
-                        .replace("/>", "")
-                        .replace("<code class=\"language-", "\\begin{lstlisting}")
-                        .replace("</code>", r"\\end{lstlisting}")
-                        .replace("<span", "")
-                        .replace(r"</span>", "")
-                }
-                // inline HTML
-                _ => {
-                    tex = tex
-                        .replace("/>", "")
-                        .replace("<code\n", "<code")
-                        .replace("<code", r"\lstinline|")
-                        .replace("</code>", r"|")
-                        .replace("<span", "")
-                        .replace(r"</span>", "");
-                }
-            }
-            // remove all HTML comments.
-            let re = Regex::new(r"<!--.*-->").unwrap();
+            tex = parse_html(&tex);
             output.push_str(&re.replace(&tex, ""));
         }
 
