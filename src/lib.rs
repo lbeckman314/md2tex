@@ -1,20 +1,17 @@
 extern crate html2md;
 extern crate regex;
+use inflector::cases::kebabcase::to_kebab_case;
 use html2md::parse_html;
 #[macro_use]
 extern crate log;
 extern crate env_logger;
 
-use inflector::cases::kebabcase::to_kebab_case;
 use pulldown_cmark::{Event, Options, Parser, Tag};
 use regex::Regex;
 use resvg::prelude::*;
 use std::default::Default;
 use std::ffi::OsStr;
-use std::env;
 use std::fs;
-use std::io::BufRead;
-use std::io::BufReader;
 use std::path::Path;
 use std::string::String;
 use walkdir::WalkDir;
@@ -39,7 +36,6 @@ pub struct CurrentType {
 
 /// Converts markdown string to tex string.
 pub fn markdown_to_tex(markdown: String) -> String {
-    //env_logger::init();
     let mut output = String::new();
 
     let mut header_value = String::new();
@@ -49,7 +45,7 @@ pub fn markdown_to_tex(markdown: String) -> String {
     };
     let mut cells = 0;
 
-    let mut options = Options::empty();cd
+    let mut options = Options::empty();
     options.insert(Options::FIRST_PASS);
     options.insert(Options::ENABLE_STRIKETHROUGH);
     options.insert(Options::ENABLE_FOOTNOTES);
@@ -131,21 +127,15 @@ pub fn markdown_to_tex(markdown: String) -> String {
                     let mut found = false;
 
                     // iterate through `src` directory to find the resource.
-                    let current = env::current_dir().unwrap();
-                    let src = current.parent()
                     for entry in WalkDir::new("src").into_iter().filter_map(|e| e.ok()) {
                         let _path = entry.path().to_str().unwrap();
                         let _url = &url.clone().into_string().replace("../", "");
                         if _path.ends_with(_url) {
 
-                            let file = match fs::File::open(_path) {
-                                Ok(file) => file,
+                            match fs::File::open(_path) {
+                                Ok(_) => (),
                                 Err(_) => panic!("Unable to read title from {}", _path),
                             };
-                            let buffer = BufReader::new(file);
-
-                            let title = title_string(buffer);
-                            output.push_str(&title);
 
                             found = true;
                             break;
@@ -254,8 +244,7 @@ pub fn markdown_to_tex(markdown: String) -> String {
             }
 
             Event::Start(Tag::Image(_, path, title)) => {
-                let mut path_str = String::new();
-                path_str = path.clone().into_string();
+                let mut path_str = path.clone().into_string();
 
                 // if image path ends with ".svg", run it through
                 // svg2png to convert to png file.
