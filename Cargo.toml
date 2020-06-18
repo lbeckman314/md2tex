@@ -1,6 +1,6 @@
 [package]
 name = "md2tex"
-version = "0.1.3"
+version = "0.1.4"
 authors = ["lbeckman314 <liam@liambeckman.com>"]
 description = "A small utility to convert markdown files to pdf exploiting tectonic. This is a forked version based off of tforgione's awesome library (https://gitea.tforgione.fr/tforgione/md2pdf/)."
 edition = "2018"
