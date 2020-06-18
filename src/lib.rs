@@ -256,8 +256,7 @@ pub fn markdown_to_tex(markdown: String) -> String {
             }
 
             Event::Start(Tag::Image(_, path, title)) => {
-                let mut path_str = String::new();
-                path_str = path.clone().into_string();
+                let mut path_str = path.clone().into_string();
 
                 // if image path ends with ".svg", run it through
                 // svg2png to convert to png file.
@@ -266,7 +265,6 @@ pub fn markdown_to_tex(markdown: String) -> String {
 
                     let mut filename_png = String::from(path.clone().into_string());
                     filename_png = filename_png.replace(".svg", ".png");
-                    filename_png = filename_png.replace("../../", "");
                     debug!("filename_png: {}", filename_png);
 
                     // create output directories.
@@ -281,6 +279,7 @@ pub fn markdown_to_tex(markdown: String) -> String {
                 output.push_str("\\centering\n");
                 output.push_str("\\includegraphics[width=\\textwidth]{");
                 output.push_str(&format!("../../src/{path}", path = path_str));
+                output.push_str(path_str.as_str());
                 output.push_str("}\n");
                 output.push_str("\\caption{");
                 output.push_str(&*title);
