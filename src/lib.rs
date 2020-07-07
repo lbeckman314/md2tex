@@ -279,7 +279,6 @@ pub fn markdown_to_tex(markdown: String) -> String {
                 output.push_str("\\centering\n");
                 output.push_str("\\includegraphics[width=\\textwidth]{");
                 output.push_str(&format!("../../src/{path}", path = path_str));
-                output.push_str(path_str.as_str());
                 output.push_str("}\n");
                 output.push_str("\\caption{");
                 output.push_str(&*title);
@@ -545,4 +544,25 @@ pub fn svg2png(filename: String) -> Option<Box<dyn OutputImage>> {
 /// Source:  https://stackoverflow.com/questions/45291832/extracting-a-file-extension-from-a-given-path-in-rust-idiomatically
 pub fn get_extension(filename: &str) -> Option<&str> {
     Path::new(filename).extension().and_then(OsStr::to_str)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn markdown_to_tex_basic() {
+        assert_eq!(
+            "\nHello World~\\\\\n",
+            markdown_to_tex("Hello World".to_string())
+        );
+    }
+
+    #[test]
+    fn markdown_to_tex_image() {
+        assert_eq!(
+            "\n\\begin{figure}\n\\centering\n\\includegraphics[width=\\textwidth]{../../src/image.png}\n\\caption{}\n\\end{figure}\n~\\\\\n",
+            markdown_to_tex("![](image.png)".to_string())
+        );
+    }
 }
