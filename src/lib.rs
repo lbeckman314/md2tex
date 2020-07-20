@@ -38,6 +38,23 @@ pub struct CurrentType {
 
 /// Converts markdown string to tex string.
 pub fn markdown_to_tex(markdown: String) -> String {
+    let mut options = Options::empty();
+    options.insert(Options::FIRST_PASS);
+    options.insert(Options::ENABLE_STRIKETHROUGH);
+    options.insert(Options::ENABLE_FOOTNOTES);
+    options.insert(Options::ENABLE_TASKLISTS);
+    options.insert(Options::ENABLE_TABLES);
+
+    let parser = Parser::new_ext(&markdown, options);
+
+    return parser_to_tex(parser);
+}
+
+/// Takes a pulldown_cmark::Parser or any iterator containing `pulldown_cmark::Event` and transforms it to a string
+pub fn parser_to_tex<'a, P>(parser: P) -> String
+where
+    P: 'a + Iterator<Item = Event<'a>>,
+{
     //env_logger::init();
     let mut output = String::new();
 
@@ -47,15 +64,6 @@ pub fn markdown_to_tex(markdown: String) -> String {
         event_type: EventType::Text,
     };
     let mut cells = 0;
-
-    let mut options = Options::empty();
-    options.insert(Options::FIRST_PASS);
-    options.insert(Options::ENABLE_STRIKETHROUGH);
-    options.insert(Options::ENABLE_FOOTNOTES);
-    options.insert(Options::ENABLE_TASKLISTS);
-    options.insert(Options::ENABLE_TABLES);
-
-    let parser = Parser::new_ext(&markdown, options);
 
     let mut equation_mode = false;
     let mut buffer = String::new();
