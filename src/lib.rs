@@ -16,8 +16,9 @@ use std::path::Path;
 use std::string::String;
 use walkdir::WalkDir;
 
+/// TODO https://github.com/raphlinus/pulldown-cmark/blob/master/src/html.rs
+
 /// Used to keep track of current pulldown_cmark "event".
-/// TODO: Is there a native pulldown_cmark method to do this?
 #[derive(Debug)]
 enum EventType {
     Code,
@@ -34,8 +35,61 @@ pub struct CurrentType {
     event_type: EventType,
 }
 
+pub struct Converter<'a> {
+    content: &'a str,
+    template: Option<&'a str>,
+    assets: Option<&'a str>,
+}
+
+impl<'a> Converter<'a> {
+    pub fn new(content: &'a str) -> Converter<'a> {
+        Converter {
+            content: content,
+            template: None,
+            assets: None,
+        }
+    }
+
+    pub fn template(self, template: &'a str) -> Converter {
+        Converter {
+            template: Some(template),
+            ..self
+        }
+    }
+
+    pub fn assets(self, assets: &'a str) -> Converter {
+        Converter {
+            assets: Some(assets),
+            ..self
+        }
+    }
+}
+
+/// Backwards-compatible function.
+pub fn markdown_to_tex(content: String) -> String {
+    convert(&content, None)
+}
+
+pub fn md_to_tex(converter: Converter) -> String {
+    let latex = convert(converter.content, converter.assets);
+
+    let mut output = String::new();
+    match converter.template {
+        Some(template) => {
+            output.push_str(&template);
+            // Insert new LaTeX data into template after "\begin{document}".
+            let mark = "\\begin{document}";
+            let pos = template.find(&mark).unwrap() + mark.len();
+            output.insert_str(pos, &latex);
+        },
+        None => output.push_str(&latex),
+    }
+
+    output
+}
+
 /// Converts markdown string to tex string.
-pub fn markdown_to_tex(markdown: String) -> String {
+fn convert(content: &str, assets_prefix: Option<&str>) -> String {
     let mut output = String::new();
 
     let mut header_value = String::new();
@@ -52,7 +106,7 @@ pub fn markdown_to_tex(markdown: String) -> String {
     options.insert(Options::ENABLE_TASKLISTS);
     options.insert(Options::ENABLE_TABLES);
 
-    let parser = Parser::new_ext(&markdown, options);
+    let parser = Parser::new_ext(&content, options);
 
     let mut equation_mode = false;
     let mut buffer = String::new();
@@ -127,6 +181,8 @@ pub fn markdown_to_tex(markdown: String) -> String {
                     let mut found = false;
 
                     // iterate through `src` directory to find the resource.
+                    let current = env::current_dir().unwrap();
+                    let src = current.parent();
                     for entry in WalkDir::new("src").into_iter().filter_map(|e| e.ok()) {
                         let _path = entry.path().to_str().unwrap();
                         let _url = &url.clone().into_string().replace("../", "");
@@ -244,29 +300,33 @@ pub fn markdown_to_tex(markdown: String) -> String {
             }
 
             Event::Start(Tag::Image(_, path, title)) => {
-                let mut path_str = path.clone().into_string();
+                let mut assets_path = String::new();
+                match assets_prefix {
+                    Some(assets_prefix) => assets_path.push_str(&assets_prefix),
+                    None => (),
+                }
+                assets_path.push_str(&path.clone().into_string());
 
                 // if image path ends with ".svg", run it through
                 // svg2png to convert to png file.
                 if get_extension(&path).unwrap() == "svg" {
-                    let img = svg2png(path.clone().into_string()).unwrap();
+                    let img = svg2png(assets_path).unwrap();
 
                     let mut filename_png = String::from(path.clone().into_string());
                     filename_png = filename_png.replace(".svg", ".png");
                     filename_png = filename_png.replace("../../", "");
 
                     // create output directories.
-                    let _ = fs::create_dir_all(&filename_png);
                     let _ = fs::create_dir_all(Path::new(&filename_png).parent().unwrap());
 
                     img.save(std::path::Path::new(&filename_png));
-                    path_str = filename_png.clone();
+                    assets_path = filename_png.clone();
                 }
 
                 output.push_str("\\begin{figure}\n");
                 output.push_str("\\centering\n");
                 output.push_str("\\includegraphics[width=\\textwidth]{");
-                output.push_str(&format!("../../src/{path}", path = path_str));
+                output.push_str(&assets_path);
                 output.push_str("}\n");
                 output.push_str("\\caption{");
                 output.push_str(&*title);
@@ -306,14 +366,14 @@ pub fn markdown_to_tex(markdown: String) -> String {
 
             Event::InlineHtml(t) => {
                 // convert common html patterns to tex
-                output.push_str(&html2tex(t.into_string(), &current));
+                output.push_str(&html2tex(t.into_string(), &current, assets_prefix));
                 current.event_type = EventType::Text;
             }
 
             Event::Html(t) => {
                 current.event_type = EventType::Html;
                 // convert common html patterns to tex
-                output.push_str(markdown_to_tex(parse_html(&t.into_string())).as_str());
+                output.push_str(convert(&parse_html(&t.into_string()), assets_prefix).as_str());
                 current.event_type = EventType::Text;
             }
 
@@ -396,7 +456,7 @@ pub fn markdown_to_tex(markdown: String) -> String {
 ///
 /// Eventually I hope to use a mature 'HTML to tex' parser.
 /// Something along the lines of https://github.com/Adonai/html2md/
-pub fn html2tex(html: String, current: &CurrentType) -> String {
+pub fn html2tex(html: String, current: &CurrentType, assets_prefix: Option<&str>) -> String {
     let mut tex = html;
     let mut output = String::new();
 
@@ -411,7 +471,13 @@ pub fn html2tex(html: String, current: &CurrentType) -> String {
         let src = Regex::new(r#"src="([a-zA-Z0-9-/_.]*)"#).unwrap();
         let caps = src.captures(&tex).unwrap();
         let path_raw = caps.get(1).unwrap().as_str();
-        let mut path = format!("../../src/{path}", path = path_raw);
+        let mut path = String::new();
+
+        match assets_prefix {
+            Some(assets_prefix) => path.push_str(&assets_prefix),
+            None => (),
+        }
+        path.push_str(path_raw);
 
         // if path ends with ".svg", run it through
         // svg2png to convert to png file.
@@ -474,9 +540,9 @@ pub fn html2tex(html: String, current: &CurrentType) -> String {
 ///
 /// Example: foo.svg becomes foo.svg.png
 pub fn svg2png(filename: String) -> Option<Box<dyn OutputImage>> {
+    println!("filename: {}", filename);
     let mut opt = resvg::Options::default();
     opt.usvg.path = Some(filename.clone().into());
-
     let rtree = usvg::Tree::from_file(&filename, &opt.usvg).unwrap();
     let backend = resvg::default_backend();
     let img = backend.render_to_image(&rtree, &opt);
@@ -500,3 +566,35 @@ mod tests {
         assert!(true)
     }
 }
+
+
+///
+fn path_adder(content: &str, chapter_path: &PathBuf) -> String {
+    let mut output = String::new();
+    let mut options = Options::empty();
+    let parser = Parser::new_ext(content, options);
+    for event in parser {
+        match event {
+            Event::Start(Tag::Image(_, path, title)) => {
+                // TODO Append chapter_path to path.
+            }
+            _ => (),
+        }
+    }
+
+    output
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_path_adder() {
+        let content = "![foo](./foo.png)";
+        let path = Path::new("/home/foo/bar");
+        let new_path = path_adder(content, &path);
+        assert_eq!(new_path, "![foo])(/home/foo/bar/foo.png)");
+    }
+}
+
