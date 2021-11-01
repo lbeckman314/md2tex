@@ -1,19 +1,19 @@
 extern crate html2md;
 extern crate regex;
-use inflector::cases::kebabcase::to_kebab_case;
 use html2md::parse_html;
+use inflector::cases::kebabcase::to_kebab_case;
 #[macro_use]
 extern crate log;
 extern crate env_logger;
 
-use pulldown_cmark::{Event, Options, Parser, Tag};
+use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag};
 use regex::Regex;
-use resvg::prelude::*;
 use std::default::Default;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;
 use std::string::String;
+use tiny_skia::Pixmap;
 use walkdir::WalkDir;
 
 /// TODO https://github.com/raphlinus/pulldown-cmark/blob/master/src/html.rs
@@ -81,7 +81,7 @@ pub fn md_to_tex(converter: Converter) -> String {
             let mark = "\\begin{document}";
             let pos = template.find(&mark).unwrap() + mark.len();
             output.insert_str(pos, &latex);
-        },
+        }
         None => output.push_str(&latex),
     }
 
@@ -100,7 +100,7 @@ fn convert(content: &str, assets_prefix: Option<&str>) -> String {
     let mut cells = 0;
 
     let mut options = Options::empty();
-    options.insert(Options::FIRST_PASS);
+    options.insert(Options::ENABLE_SMART_PUNCTUATION);
     options.insert(Options::ENABLE_STRIKETHROUGH);
     options.insert(Options::ENABLE_FOOTNOTES);
     options.insert(Options::ENABLE_TASKLISTS);
@@ -113,12 +113,12 @@ fn convert(content: &str, assets_prefix: Option<&str>) -> String {
 
     for event in parser {
         match event {
-            Event::Start(Tag::Header(level)) => {
+            Event::Start(Tag::Heading(level)) => {
                 current.event_type = EventType::Header;
                 output.push_str("\n");
                 output.push_str("\\");
                 match level {
-                    -1 => output.push_str("part{"),
+                    // -1 => output.push_str("part{"),
                     0 => output.push_str("chapter{"),
                     1 => output.push_str("section{"),
                     2 => output.push_str("subsection{"),
@@ -128,7 +128,7 @@ fn convert(content: &str, assets_prefix: Option<&str>) -> String {
                     _ => error!("header is out of range."),
                 }
             }
-            Event::End(Tag::Header(_)) => {
+            Event::End(Tag::Heading(_)) => {
                 output.push_str("}\n");
                 output.push_str("\\");
                 output.push_str("label{");
@@ -181,13 +181,12 @@ fn convert(content: &str, assets_prefix: Option<&str>) -> String {
                     let mut found = false;
 
                     // iterate through `src` directory to find the resource.
-                    let current = env::current_dir().unwrap();
+                    let current = std::env::current_dir().unwrap();
                     let src = current.parent();
                     for entry in WalkDir::new("src").into_iter().filter_map(|e| e.ok()) {
                         let _path = entry.path().to_str().unwrap();
                         let _url = &url.clone().into_string().replace("../", "");
                         if _path.ends_with(_url) {
-
                             match fs::File::open(_path) {
                                 Ok(_) => (),
                                 Err(_) => panic!("Unable to read title from {}", _path),
@@ -310,7 +309,7 @@ fn convert(content: &str, assets_prefix: Option<&str>) -> String {
                 // if image path ends with ".svg", run it through
                 // svg2png to convert to png file.
                 if get_extension(&path).unwrap() == "svg" {
-                    let img = svg2png(assets_path).unwrap();
+                    let img = svg2png(assets_path);
 
                     let mut filename_png = String::from(path.clone().into_string());
                     filename_png = filename_png.replace(".svg", ".png");
@@ -319,7 +318,7 @@ fn convert(content: &str, assets_prefix: Option<&str>) -> String {
                     // create output directories.
                     let _ = fs::create_dir_all(Path::new(&filename_png).parent().unwrap());
 
-                    img.save(std::path::Path::new(&filename_png));
+                    img.save_png(std::path::Path::new(&filename_png)).unwrap();
                     assets_path = filename_png.clone();
                 }
 
@@ -339,12 +338,15 @@ fn convert(content: &str, assets_prefix: Option<&str>) -> String {
             Event::Start(Tag::CodeBlock(lang)) => {
                 let re = Regex::new(r",.*").unwrap();
                 current.event_type = EventType::Code;
-                if !lang.is_empty() {
-                    output.push_str("\\begin{lstlisting}[language=");
-                    output.push_str(&re.replace(&lang, ""));
-                    output.push_str("]\n");
-                } else {
-                    output.push_str("\\begin{lstlisting}\n");
+                match lang {
+                    CodeBlockKind::Indented => {
+                        output.push_str("\\begin{lstlisting}\n");
+                    }
+                    CodeBlockKind::Fenced(lang) => {
+                        output.push_str("\\begin{lstlisting}[language=");
+                        output.push_str(&re.replace(&lang, ""));
+                        output.push_str("]\n");
+                    }
                 }
             }
 
@@ -362,12 +364,6 @@ fn convert(content: &str, assets_prefix: Option<&str>) -> String {
                         .push_str(&*t.replace("…", "...").replace("З", "3").replace("�", r"\�")),
                 }
                 output.push_str("|");
-            }
-
-            Event::InlineHtml(t) => {
-                // convert common html patterns to tex
-                output.push_str(&html2tex(t.into_string(), &current, assets_prefix));
-                current.event_type = EventType::Text;
             }
 
             Event::Html(t) => {
@@ -482,14 +478,14 @@ pub fn html2tex(html: String, current: &CurrentType, assets_prefix: Option<&str>
         // if path ends with ".svg", run it through
         // svg2png to convert to png file.
         if get_extension(&path).unwrap() == "svg" {
-            let img = svg2png(path.to_string()).unwrap();
+            let img = svg2png(path.to_string());
             path = path.replace(".svg", ".png");
             path = path.replace("../../", "");
 
             // create output directories.
             let _ = fs::create_dir_all(Path::new(&path).parent().unwrap());
 
-            img.save(std::path::Path::new(&path));
+            img.save_png(std::path::Path::new(&path)).unwrap();
         }
 
         match current.event_type {
@@ -539,14 +535,17 @@ pub fn html2tex(html: String, current: &CurrentType, assets_prefix: Option<&str>
 /// Converts an SVG file to a PNG file.
 ///
 /// Example: foo.svg becomes foo.svg.png
-pub fn svg2png(filename: String) -> Option<Box<dyn OutputImage>> {
-    println!("filename: {}", filename);
-    let mut opt = resvg::Options::default();
-    opt.usvg.path = Some(filename.clone().into());
-    let rtree = usvg::Tree::from_file(&filename, &opt.usvg).unwrap();
-    let backend = resvg::default_backend();
-    let img = backend.render_to_image(&rtree, &opt);
-    img
+pub fn svg2png(filename: String) -> Pixmap {
+    debug!("svg2png path: {}", &filename);
+    let opt = usvg::Options::default();
+    let svg_data = std::fs::read(&filename).unwrap();
+    let rtree = usvg::Tree::from_data(&svg_data, &opt.to_ref()).unwrap();
+
+    let pixmap_size = rtree.svg_node().size.to_screen_size();
+    let mut pixmap = tiny_skia::Pixmap::new(pixmap_size.width(), pixmap_size.height()).unwrap();
+    resvg::render(&rtree, usvg::FitTo::Original, pixmap.as_mut()).unwrap();
+
+    pixmap
 }
 
 /// Extract extension from filename
@@ -567,9 +566,8 @@ mod tests {
     }
 }
 
-
 ///
-fn path_adder(content: &str, chapter_path: &PathBuf) -> String {
+fn path_adder(content: &str, chapter_path: &Path) -> String {
     let mut output = String::new();
     let mut options = Options::empty();
     let parser = Parser::new_ext(content, options);
@@ -597,4 +595,3 @@ mod test {
         assert_eq!(new_path, "![foo])(/home/foo/bar/foo.png)");
     }
 }
-
