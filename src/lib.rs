@@ -40,6 +40,7 @@ pub struct Converter<'a> {
     content: &'a str,
     template: Option<&'a str>,
     assets: Option<&'a Path>,
+    chap_offset: i32,
 }
 
 impl<'a> Converter<'a> {
@@ -48,6 +49,7 @@ impl<'a> Converter<'a> {
             content,
             template: None,
             assets: None,
+            chap_offset: 0,
         }
     }
 
@@ -65,6 +67,11 @@ impl<'a> Converter<'a> {
         }
     }
 
+    pub fn chapter_level_offset(mut self, offset: i32) -> Self {
+        self.chap_offset = offset;
+        self
+    }
+
     pub fn run(self) -> String {
         md_to_tex(self)
     }
@@ -72,11 +79,11 @@ impl<'a> Converter<'a> {
 
 /// Backwards-compatible function.
 pub fn markdown_to_tex(content: String) -> String {
-    convert(&content, None)
+    Converter::new(&content).run()
 }
 
 pub fn md_to_tex(converter: Converter) -> String {
-    let latex = convert(converter.content, converter.assets);
+    let latex = convert(converter.content, converter.assets, converter.chap_offset);
 
     let mut output = String::new();
     match converter.template {
@@ -107,7 +114,7 @@ pub fn escape_tex_text(md: &str) -> String {
 }
 
 /// Converts markdown string to tex string.
-fn convert(content: &str, assets_prefix: Option<&Path>) -> String {
+fn convert(content: &str, assets_prefix: Option<&Path>, chap_offset: i32) -> String {
     let mut output = String::new();
 
     let mut header_value = String::new();
@@ -133,8 +140,10 @@ fn convert(content: &str, assets_prefix: Option<&Path>) -> String {
         match event {
             Event::Start(Tag::Heading(level)) => {
                 current.event_type = EventType::Header;
-                output.push_str("\n");
-                output.push_str("\\");
+                output.push_str("\n\\");
+
+                let level = level as i32 + chap_offset;
+
                 match level {
                     // -1 => output.push_str("part{"),
                     0 => output.push_str("chapter{"),
@@ -142,7 +151,7 @@ fn convert(content: &str, assets_prefix: Option<&Path>) -> String {
                     2 => output.push_str("subsection{"),
                     3 => output.push_str("subsubsection{"),
                     4 => output.push_str("paragraph{"),
-                    5 => output.push_str("subparagraph{"),
+                    5..=8 => output.push_str("subparagraph{"),
                     _ => error!("header is out of range."),
                 }
             }
@@ -389,7 +398,9 @@ fn convert(content: &str, assets_prefix: Option<&Path>) -> String {
             Event::Html(t) => {
                 current.event_type = EventType::Html;
                 // convert common html patterns to tex
-                output.push_str(convert(&parse_html(&t.into_string()), assets_prefix).as_str());
+                output.push_str(
+                    convert(&parse_html(&t.into_string()), assets_prefix, chap_offset).as_str(),
+                );
                 current.event_type = EventType::Text;
             }
 
