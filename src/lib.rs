@@ -11,7 +11,8 @@ use regex::Regex;
 use std::default::Default;
 use std::ffi::OsStr;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::string::String;
 use tiny_skia::Pixmap;
 use walkdir::WalkDir;
@@ -38,13 +39,13 @@ pub struct CurrentType {
 pub struct Converter<'a> {
     content: &'a str,
     template: Option<&'a str>,
-    assets: Option<&'a str>,
+    assets: Option<&'a Path>,
 }
 
 impl<'a> Converter<'a> {
     pub fn new(content: &'a str) -> Converter<'a> {
         Converter {
-            content: content,
+            content,
             template: None,
             assets: None,
         }
@@ -57,11 +58,15 @@ impl<'a> Converter<'a> {
         }
     }
 
-    pub fn assets(self, assets: &'a str) -> Converter {
+    pub fn assets(self, assets: &'a Path) -> Converter {
         Converter {
             assets: Some(assets),
             ..self
         }
+    }
+
+    pub fn run(self) -> String {
+        md_to_tex(self)
     }
 }
 
@@ -76,7 +81,7 @@ pub fn md_to_tex(converter: Converter) -> String {
     let mut output = String::new();
     match converter.template {
         Some(template) => {
-            output.push_str(&template);
+            output.push_str(template);
             // Insert new LaTeX data into template after "\begin{document}".
             let mark = "\\begin{document}";
             let pos = template.find(&mark).unwrap() + mark.len();
@@ -102,7 +107,7 @@ pub fn escape_tex_text(md: &str) -> String {
 }
 
 /// Converts markdown string to tex string.
-fn convert(content: &str, assets_prefix: Option<&str>) -> String {
+fn convert(content: &str, assets_prefix: Option<&Path>) -> String {
     let mut output = String::new();
 
     let mut header_value = String::new();
@@ -312,33 +317,35 @@ fn convert(content: &str, assets_prefix: Option<&str>) -> String {
             }
 
             Event::Start(Tag::Image(_, path, title)) => {
-                let mut assets_path = String::new();
-                match assets_prefix {
-                    Some(assets_prefix) => assets_path.push_str(&assets_prefix),
-                    None => (),
-                }
-                assets_path.push_str(&path.clone().into_string());
+                let mut assets_path = assets_prefix
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_default()
+                    .join(path.as_ref());
+
+                let mut path = PathBuf::from_str(path.as_ref()).unwrap();
 
                 // if image path ends with ".svg", run it through
                 // svg2png to convert to png file.
-                if get_extension(&path).unwrap() == "svg" {
-                    let img = svg2png(assets_path);
+                if path.extension().unwrap() == "svg" {
+                    let img = svg2png(&assets_path);
 
-                    let mut filename_png = String::from(path.clone().into_string());
-                    filename_png = filename_png.replace(".svg", ".png");
-                    filename_png = filename_png.replace("../../", "");
+                    path.set_extension("png");
+                    let path = path
+                        .strip_prefix("../..")
+                        .map(Path::to_path_buf)
+                        .unwrap_or(path);
 
                     // create output directories.
-                    let _ = fs::create_dir_all(Path::new(&filename_png).parent().unwrap());
+                    let _ = fs::create_dir_all(path.parent().unwrap());
 
-                    img.save_png(std::path::Path::new(&filename_png)).unwrap();
-                    assets_path = filename_png.clone();
+                    img.save_png(&path).unwrap();
+                    assets_path = path;
                 }
 
                 output.push_str("\\begin{figure}\n");
                 output.push_str("\\centering\n");
                 output.push_str("\\includegraphics[width=\\textwidth]{");
-                output.push_str(&assets_path);
+                output.push_str(assets_path.to_string_lossy().as_ref());
                 output.push_str("}\n");
                 output.push_str("\\caption{");
                 output.push_str(&*title);
@@ -456,7 +463,7 @@ fn convert(content: &str, assets_prefix: Option<&str>) -> String {
 ///
 /// Eventually I hope to use a mature 'HTML to tex' parser.
 /// Something along the lines of https://github.com/Adonai/html2md/
-pub fn html2tex(html: String, current: &CurrentType, assets_prefix: Option<&str>) -> String {
+pub fn html2tex(html: String, current: &CurrentType, assets_prefix: Option<&Path>) -> String {
     let mut tex = html;
     let mut output = String::new();
 
@@ -471,20 +478,21 @@ pub fn html2tex(html: String, current: &CurrentType, assets_prefix: Option<&str>
         let src = Regex::new(r#"src="([a-zA-Z0-9-/_.]*)"#).unwrap();
         let caps = src.captures(&tex).unwrap();
         let path_raw = caps.get(1).unwrap().as_str();
-        let mut path = String::new();
 
-        match assets_prefix {
-            Some(assets_prefix) => path.push_str(&assets_prefix),
-            None => (),
-        }
-        path.push_str(path_raw);
+        let mut path = assets_prefix
+            .map(|p| p.to_path_buf())
+            .unwrap_or_default()
+            .join(path_raw);
 
         // if path ends with ".svg", run it through
         // svg2png to convert to png file.
-        if get_extension(&path).unwrap() == "svg" {
-            let img = svg2png(path.to_string());
-            path = path.replace(".svg", ".png");
-            path = path.replace("../../", "");
+        if path.extension().unwrap().to_os_string() == "svg" {
+            let img = svg2png(&path);
+            path.set_extension("png");
+            let path = path
+                .strip_prefix("../../")
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|_| path.clone());
 
             // create output directories.
             let _ = fs::create_dir_all(Path::new(&path).parent().unwrap());
@@ -501,7 +509,7 @@ pub fn html2tex(html: String, current: &CurrentType, assets_prefix: Option<&str>
             }
         }
 
-        output.push_str(&path);
+        output.push_str(path.to_string_lossy().as_ref());
         output.push_str(r"}\end{center}");
         output.push_str("\n");
 
@@ -539,10 +547,10 @@ pub fn html2tex(html: String, current: &CurrentType, assets_prefix: Option<&str>
 /// Converts an SVG file to a PNG file.
 ///
 /// Example: foo.svg becomes foo.svg.png
-pub fn svg2png(filename: String) -> Pixmap {
-    debug!("svg2png path: {}", &filename);
+pub fn svg2png(filename: &Path) -> Pixmap {
+    debug!("svg2png path: {:?}", &filename);
     let opt = usvg::Options::default();
-    let svg_data = std::fs::read(&filename).unwrap();
+    let svg_data = std::fs::read(filename).unwrap();
     let rtree = usvg::Tree::from_data(&svg_data, &opt.to_ref()).unwrap();
 
     let pixmap_size = rtree.svg_node().size.to_screen_size();
@@ -550,11 +558,6 @@ pub fn svg2png(filename: String) -> Pixmap {
     resvg::render(&rtree, usvg::FitTo::Original, pixmap.as_mut()).unwrap();
 
     pixmap
-}
-
-/// Extract extension from filename
-pub fn get_extension(filename: &str) -> Option<&str> {
-    Path::new(filename).extension().and_then(OsStr::to_str)
 }
 
 #[cfg(test)]
