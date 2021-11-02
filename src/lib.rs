@@ -88,6 +88,19 @@ pub fn md_to_tex(converter: Converter) -> String {
     output
 }
 
+pub fn escape_tex_text(md: &str) -> String {
+    md.replace(r"\", r"\\")
+        .replace("&", r"\&")
+        .replace(r"\s", r"\textbackslash{}s")
+        .replace(r"\w", r"\textbackslash{}w")
+        .replace("_", r"\_")
+        .replace(r"\<", "<")
+        .replace(r"%", r"\%")
+        .replace(r"$", r"\$")
+        .replace(r"—", "---")
+        .replace("#", r"\#")
+}
+
 /// Converts markdown string to tex string.
 fn convert(content: &str, assets_prefix: Option<&str>) -> String {
     let mut output = String::new();
@@ -388,6 +401,8 @@ fn convert(content: &str, assets_prefix: Option<&str>) -> String {
                 match current.event_type {
                     EventType::Strong
                     | EventType::Emphasis
+                    | EventType::Table
+                    | EventType::TableHead
                     | EventType::Text
                     | EventType::Header => {
                         // TODO more elegant way to do ordered `replace`s (structs?).
@@ -404,7 +419,7 @@ fn convert(content: &str, assets_prefix: Option<&str>) -> String {
                         } else if delim_end
                             .into_iter()
                             .any(|element| buffer.contains(element))
-                            || equation_mode == true
+                            || equation_mode
                         {
                             let popped = output.pop().unwrap();
                             if popped != '\\' {
@@ -413,18 +428,7 @@ fn convert(content: &str, assets_prefix: Option<&str>) -> String {
                             output.push_str(&*t);
                             equation_mode = false;
                         } else {
-                            output.push_str(
-                                &*t.replace(r"\", r"\\")
-                                    .replace("&", r"\&")
-                                    .replace(r"\s", r"\textbackslash{}s")
-                                    .replace(r"\w", r"\textbackslash{}w")
-                                    .replace("_", r"\_")
-                                    .replace(r"\<", "<")
-                                    .replace(r"%", "%")
-                                    .replace(r"$", r"\$")
-                                    .replace(r"—", "---")
-                                    .replace("#", r"\#"),
-                            );
+                            output.push_str(&escape_tex_text(&*t));
                         }
                         header_value = t.into_string();
                     }
