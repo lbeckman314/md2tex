@@ -1,21 +1,17 @@
-extern crate html2md;
-extern crate regex;
 use html2md::parse_html;
 use inflector::cases::kebabcase::to_kebab_case;
-#[macro_use]
-extern crate log;
-extern crate env_logger;
 
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag};
 use regex::Regex;
 use std::default::Default;
-use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::string::String;
 use tiny_skia::Pixmap;
 use walkdir::WalkDir;
+
+use log::*;
 
 /// TODO https://github.com/raphlinus/pulldown-cmark/blob/master/src/html.rs
 
@@ -131,7 +127,7 @@ fn convert(content: &str, assets_prefix: Option<&Path>, chap_offset: i32) -> Str
     options.insert(Options::ENABLE_TASKLISTS);
     options.insert(Options::ENABLE_TABLES);
 
-    let parser = Parser::new_ext(&content, options);
+    let parser = Parser::new_ext(content, options);
 
     let mut equation_mode = false;
     let mut buffer = String::new();
@@ -157,13 +153,11 @@ fn convert(content: &str, assets_prefix: Option<&Path>, chap_offset: i32) -> Str
             }
             Event::End(Tag::Heading(_)) => {
                 output.push_str("}\n");
-                output.push_str("\\");
-                output.push_str("label{");
+                output.push_str("\\label{");
                 output.push_str(&header_value);
                 output.push_str("}\n");
 
-                output.push_str("\\");
-                output.push_str("label{");
+                output.push_str("\\label{");
                 output.push_str(&to_kebab_case(&header_value));
                 output.push_str("}\n");
             }
@@ -171,13 +165,13 @@ fn convert(content: &str, assets_prefix: Option<&Path>, chap_offset: i32) -> Str
                 current.event_type = EventType::Emphasis;
                 output.push_str("\\emph{");
             }
-            Event::End(Tag::Emphasis) => output.push_str("}"),
+            Event::End(Tag::Emphasis) => output.push('}'),
 
             Event::Start(Tag::Strong) => {
                 current.event_type = EventType::Strong;
                 output.push_str("\\textbf{");
             }
-            Event::End(Tag::Strong) => output.push_str("}"),
+            Event::End(Tag::Strong) => output.push('}'),
 
             Event::Start(Tag::List(None)) => output.push_str("\\begin{itemize}\n"),
             Event::End(Tag::List(None)) => output.push_str("\\end{itemize}\n"),
@@ -185,15 +179,12 @@ fn convert(content: &str, assets_prefix: Option<&Path>, chap_offset: i32) -> Str
             Event::Start(Tag::List(Some(_))) => output.push_str("\\begin{enumerate}\n"),
             Event::End(Tag::List(Some(_))) => output.push_str("\\end{enumerate}\n"),
 
-            Event::Start(Tag::Paragraph) => {
-                output.push_str("\n");
-            }
+            Event::Start(Tag::Paragraph) => output.push('\n'),
 
             Event::End(Tag::Paragraph) => {
                 // ~ adds a space to prevent
                 // "There's no line here to end" error on empty lines.
-                output.push_str(r"~\\");
-                output.push_str("\n");
+                output.push_str(r"~\\\n");
             }
 
             Event::Start(Tag::Link(_, url, _)) => {
@@ -208,8 +199,6 @@ fn convert(content: &str, assets_prefix: Option<&Path>, chap_offset: i32) -> Str
                     let mut found = false;
 
                     // iterate through `src` directory to find the resource.
-                    let current = std::env::current_dir().unwrap();
-                    let src = current.parent();
                     for entry in WalkDir::new("src").into_iter().filter_map(|e| e.ok()) {
                         let _path = entry.path().to_str().unwrap();
                         let _url = &url.clone().into_string().replace("../", "");
@@ -233,7 +222,7 @@ fn convert(content: &str, assets_prefix: Option<&Path>, chap_offset: i32) -> Str
             }
 
             Event::End(Tag::Link(_, _, _)) => {
-                output.push_str("}");
+                output.push('}');
             }
 
             Event::Start(Tag::Table(_)) => {
@@ -250,7 +239,7 @@ fn convert(content: &str, assets_prefix: Option<&Path>, chap_offset: i32) -> Str
                 ];
                 for element in table_start {
                     output.push_str(element);
-                    output.push_str("\n");
+                    output.push('\n');
                 }
             }
 
@@ -260,11 +249,8 @@ fn convert(content: &str, assets_prefix: Option<&Path>, chap_offset: i32) -> Str
 
             Event::End(Tag::TableHead) => {
                 output.truncate(output.len() - 2);
-                output.push_str(r"\\");
-                output.push_str("\n");
-
-                output.push_str(r"\hline");
-                output.push_str("\n");
+                output.push_str(r"\\\n");
+                output.push_str(r"\hline\n");
 
                 // we presume that a table follows every table head.
                 current.event_type = EventType::Table;
@@ -280,7 +266,7 @@ fn convert(content: &str, assets_prefix: Option<&Path>, chap_offset: i32) -> Str
 
                 for element in table_end {
                     output.push_str(element);
-                    output.push_str("\n");
+                    output.push('\n');
                 }
 
                 let mut cols = String::new();
@@ -295,20 +281,16 @@ fn convert(content: &str, assets_prefix: Option<&Path>, chap_offset: i32) -> Str
                 current.event_type = EventType::Text;
             }
 
-            Event::Start(Tag::TableCell) => match current.event_type {
-                EventType::TableHead => {
+            Event::Start(Tag::TableCell) => {
+                if let EventType::TableHead = current.event_type {
                     output.push_str(r"\bfseries{");
                 }
-                _ => (),
-            },
+            }
 
             Event::End(Tag::TableCell) => {
-                match current.event_type {
-                    EventType::TableHead => {
-                        output.push_str(r"}");
-                        cells += 1;
-                    }
-                    _ => (),
+                if let EventType::TableHead = current.event_type {
+                    output.push('}');
+                    cells += 1;
                 }
 
                 output.push_str(" & ");
@@ -321,8 +303,7 @@ fn convert(content: &str, assets_prefix: Option<&Path>, chap_offset: i32) -> Str
             Event::End(Tag::TableRow) => {
                 output.truncate(output.len() - 2);
                 output.push_str(r"\\");
-                output.push_str(r"\arrayrulecolor{lightgray}\hline");
-                output.push_str("\n");
+                output.push_str(r"\arrayrulecolor{lightgray}\hline\n");
             }
 
             Event::Start(Tag::Image(_, path, title)) => {
@@ -362,7 +343,7 @@ fn convert(content: &str, assets_prefix: Option<&Path>, chap_offset: i32) -> Str
             }
 
             Event::Start(Tag::Item) => output.push_str("\\item "),
-            Event::End(Tag::Item) => output.push_str("\n"),
+            Event::End(Tag::Item) => output.push('\n'),
 
             Event::Start(Tag::CodeBlock(lang)) => {
                 let re = Regex::new(r",.*").unwrap();
@@ -392,7 +373,7 @@ fn convert(content: &str, assets_prefix: Option<&Path>, chap_offset: i32) -> Str
                     _ => output
                         .push_str(&*t.replace("…", "...").replace("З", "3").replace("�", r"\�")),
                 }
-                output.push_str("|");
+                output.push('|');
             }
 
             Event::Html(t) => {
@@ -521,8 +502,7 @@ pub fn html2tex(html: String, current: &CurrentType, assets_prefix: Option<&Path
         }
 
         output.push_str(path.to_string_lossy().as_ref());
-        output.push_str(r"}\end{center}");
-        output.push_str("\n");
+        output.push_str(r"}\end{center}\n");
 
     // all other tags
     } else {
@@ -574,42 +554,8 @@ pub fn svg2png(filename: &Path) -> Pixmap {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn svg2png_test() {
-        assert!(true)
-    }
+    fn svg2png_test() {}
 
     #[test]
-    fn get_extension_test() {
-        assert!(true)
-    }
-}
-
-///
-fn path_adder(content: &str, chapter_path: &Path) -> String {
-    let mut output = String::new();
-    let mut options = Options::empty();
-    let parser = Parser::new_ext(content, options);
-    for event in parser {
-        match event {
-            Event::Start(Tag::Image(_, path, title)) => {
-                // TODO Append chapter_path to path.
-            }
-            _ => (),
-        }
-    }
-
-    output
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn test_path_adder() {
-        let content = "![foo](./foo.png)";
-        let path = Path::new("/home/foo/bar");
-        let new_path = path_adder(content, &path);
-        assert_eq!(new_path, "![foo])(/home/foo/bar/foo.png)");
-    }
+    fn get_extension_test() {}
 }

@@ -56,5 +56,7 @@ fn main() {
     let mut output = unwrap!(File::create(output_path), "couldn't open output file");
 
     let tex = markdown_to_tex(content);
-    unwrap!(output.write(tex.as_bytes()), "couldn't write output file");
+    output
+        .write_all(tex.as_bytes())
+        .expect("couldn't write output file");
 }
