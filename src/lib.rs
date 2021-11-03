@@ -4,6 +4,7 @@ use inflector::cases::kebabcase::to_kebab_case;
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag};
 use regex::Regex;
 use std::default::Default;
+use std::fmt::Write;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -152,14 +153,13 @@ fn convert(content: &str, assets_prefix: Option<&Path>, chap_offset: i32) -> Str
                 }
             }
             Event::End(Tag::Heading(_)) => {
-                output.push_str("}\n");
-                output.push_str("\\label{");
-                output.push_str(&header_value);
-                output.push_str("}\n");
-
-                output.push_str("\\label{");
-                output.push_str(&to_kebab_case(&header_value));
-                output.push_str("}\n");
+                writeln!(
+                    output,
+                    "}}\n\\label{{{}}}\n\\label{{{}}}",
+                    header_value,
+                    to_kebab_case(&header_value)
+                )
+                .unwrap();
             }
             Event::Start(Tag::Emphasis) => {
                 current.event_type = EventType::Emphasis;
@@ -184,7 +184,8 @@ fn convert(content: &str, assets_prefix: Option<&Path>, chap_offset: i32) -> Str
             Event::End(Tag::Paragraph) => {
                 // ~ adds a space to prevent
                 // "There's no line here to end" error on empty lines.
-                output.push_str(r"~\\\n");
+                output.push_str(r"~\\");
+                output.push('\n');
             }
 
             Event::Start(Tag::Link(_, url, _)) => {
@@ -227,6 +228,7 @@ fn convert(content: &str, assets_prefix: Option<&Path>, chap_offset: i32) -> Str
 
             Event::Start(Tag::Table(_)) => {
                 current.event_type = EventType::Table;
+
                 let table_start = vec![
                     "\n",
                     r"\begingroup",
@@ -249,8 +251,8 @@ fn convert(content: &str, assets_prefix: Option<&Path>, chap_offset: i32) -> Str
 
             Event::End(Tag::TableHead) => {
                 output.truncate(output.len() - 2);
-                output.push_str(r"\\\n");
-                output.push_str(r"\hline\n");
+                output.push_str(r"\\");
+                writeln!(output, "\n\\hline").unwrap();
 
                 // we presume that a table follows every table head.
                 current.event_type = EventType::Table;
@@ -303,7 +305,8 @@ fn convert(content: &str, assets_prefix: Option<&Path>, chap_offset: i32) -> Str
             Event::End(Tag::TableRow) => {
                 output.truncate(output.len() - 2);
                 output.push_str(r"\\");
-                output.push_str(r"\arrayrulecolor{lightgray}\hline\n");
+                output.push_str(r"\arrayrulecolor{lightgray}\hline");
+                output.push('\n');
             }
 
             Event::Start(Tag::Image(_, path, title)) => {
