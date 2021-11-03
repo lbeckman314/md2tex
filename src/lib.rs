@@ -27,6 +27,7 @@ enum EventType {
     Table,
     TableHead,
     Text,
+    BlockQuote,
 }
 
 pub struct CurrentType {
@@ -38,6 +39,7 @@ pub struct Converter<'a> {
     template: Option<&'a str>,
     assets: Option<&'a Path>,
     chap_offset: i32,
+    code_utf8_escape: Option<(&'a str, &'a str)>,
 }
 
 impl<'a> Converter<'a> {
@@ -47,6 +49,7 @@ impl<'a> Converter<'a> {
             template: None,
             assets: None,
             chap_offset: 0,
+            code_utf8_escape: None,
         }
     }
 
@@ -69,6 +72,12 @@ impl<'a> Converter<'a> {
         self
     }
 
+    /// Set escape for UTF-8 characters inside code listings
+    pub fn code_utf8_escape(mut self, start_escape: &'a str, end_escape: &'a str) -> Self {
+        self.code_utf8_escape = Some((start_escape, end_escape));
+        self
+    }
+
     pub fn run(self) -> String {
         md_to_tex(self)
     }
@@ -80,7 +89,7 @@ pub fn markdown_to_tex(content: String) -> String {
 }
 
 pub fn md_to_tex(converter: Converter) -> String {
-    let latex = convert(converter.content, converter.assets, converter.chap_offset);
+    let latex = convert(&converter);
 
     let mut output = String::new();
     match converter.template {
@@ -111,7 +120,7 @@ pub fn escape_tex_text(md: &str) -> String {
 }
 
 /// Converts markdown string to tex string.
-fn convert(content: &str, assets_prefix: Option<&Path>, chap_offset: i32) -> String {
+fn convert(converter: &Converter) -> String {
     let mut output = String::new();
 
     let mut header_value = String::new();
@@ -119,6 +128,7 @@ fn convert(content: &str, assets_prefix: Option<&Path>, chap_offset: i32) -> Str
     let mut current: CurrentType = CurrentType {
         event_type: EventType::Text,
     };
+
     let mut cells = 0;
 
     let mut options = Options::empty();
@@ -128,7 +138,7 @@ fn convert(content: &str, assets_prefix: Option<&Path>, chap_offset: i32) -> Str
     options.insert(Options::ENABLE_TASKLISTS);
     options.insert(Options::ENABLE_TABLES);
 
-    let parser = Parser::new_ext(content, options);
+    let parser = Parser::new_ext(converter.content, options);
 
     let mut equation_mode = false;
     let mut buffer = String::new();
@@ -139,7 +149,7 @@ fn convert(content: &str, assets_prefix: Option<&Path>, chap_offset: i32) -> Str
                 current.event_type = EventType::Header;
                 output.push_str("\n\\");
 
-                let level = level as i32 + chap_offset;
+                let level = level as i32 + converter.chap_offset;
 
                 match level {
                     // -1 => output.push_str("part{"),
@@ -172,6 +182,12 @@ fn convert(content: &str, assets_prefix: Option<&Path>, chap_offset: i32) -> Str
                 output.push_str("\\textbf{");
             }
             Event::End(Tag::Strong) => output.push('}'),
+
+            Event::Start(Tag::BlockQuote) => {
+                current.event_type = EventType::BlockQuote;
+                output.push_str("\n\\begin{quote}\n");
+            }
+            Event::End(Tag::BlockQuote) => output.push_str("\n\\end{quote}\n\n"),
 
             Event::Start(Tag::List(None)) => output.push_str("\\begin{itemize}\n"),
             Event::End(Tag::List(None)) => output.push_str("\\end{itemize}\n"),
@@ -310,7 +326,8 @@ fn convert(content: &str, assets_prefix: Option<&Path>, chap_offset: i32) -> Str
             }
 
             Event::Start(Tag::Image(_, path, title)) => {
-                let mut assets_path = assets_prefix
+                let mut assets_path = converter
+                    .assets
                     .map(|p| p.to_path_buf())
                     .unwrap_or_default()
                     .join(path.as_ref());
@@ -357,8 +374,13 @@ fn convert(content: &str, assets_prefix: Option<&Path>, chap_offset: i32) -> Str
                     }
                     CodeBlockKind::Fenced(lang) => {
                         output.push_str("\\begin{lstlisting}[language=");
-                        output.push_str(&re.replace(&lang, ""));
-                        output.push_str("]\n");
+                        let lang = re.replace(&lang, "");
+                        let lang = lang
+                            .split_whitespace()
+                            .next()
+                            .unwrap_or_else(|| lang.as_ref());
+
+                        writeln!(output, "{}]", lang).unwrap();
                     }
                 }
             }
@@ -369,22 +391,38 @@ fn convert(content: &str, assets_prefix: Option<&Path>, chap_offset: i32) -> Str
             }
 
             Event::Code(t) => {
-                output.push_str("\\lstinline|");
-                match current.event_type {
-                    EventType::Header => output
-                        .push_str(&*t.replace("#", r"\#").replace("…", "...").replace("З", "3")),
-                    _ => output
-                        .push_str(&*t.replace("…", "...").replace("З", "3").replace("�", r"\�")),
+                output.push_str(r"\lstinline");
+
+                let mut code = String::with_capacity(t.len());
+
+                if let Some((es, ee)) = converter.code_utf8_escape {
+                    for c in t.chars() {
+                        if c.is_ascii() {
+                            code.push(c);
+                        } else {
+                            write!(code, "{}{}{}", es, c, ee).unwrap();
+                        }
+                    }
+                } else {
+                    code.push_str(&*t);
                 }
-                output.push('|');
+
+                let delims = ['|', '!', '?', '+', '@'];
+
+                let delim = delims
+                    .iter()
+                    .find(|c| !code.contains(**c))
+                    .expect("Failed to find listing delmeter");
+
+                write!(output, "{}{}{}", delim, code, delim).unwrap();
             }
 
             Event::Html(t) => {
                 current.event_type = EventType::Html;
                 // convert common html patterns to tex
-                output.push_str(
-                    convert(&parse_html(&t.into_string()), assets_prefix, chap_offset).as_str(),
-                );
+                //output.push_str(
+                //convert(&parse_html(&t.into_string()), assets_prefix, chap_offset).as_str(),
+                //);
                 current.event_type = EventType::Text;
             }
 
