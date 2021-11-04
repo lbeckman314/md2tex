@@ -1,7 +1,7 @@
 [package]
 name = "md2tex"
-version = "0.1.3"
-authors = ["lbeckman314 <liam@liambeckman.com>"]
+version = "0.1.4"
+authors = ["lbeckman314 <liam@liambeckman.com>", "Sebastian Steiner <sebastian.steiner@tuta.io>"]
 description = "A small utility to convert markdown files to pdf exploiting tectonic. This is a forked version based off of tforgione's awesome library (https://gitea.tforgione.fr/tforgione/md2pdf/)."
 edition = "2018"
 license = "MIT"
@@ -9,16 +9,15 @@ repository = "https://github.com/lbeckman314/md2tex"
 readme = "README.md"
 
 [dependencies]
-pulldown-cmark = "0.5.2"
-clap = "2.33.0"
-walkdir = "2.2.9"
+pulldown-cmark = "0.8.0"
+clap = "2.33.3"
+walkdir = "2.3.2"
 Inflector = "0.11.4"
-regex = "1.2.1"
-raqote = "0.6.1"
-log = "0.4.8"
-env_logger = "0.6.2"
-html2md = "0.2.9"
-
-[dependencies.resvg]
-version = "0.7.0"
-features = ["raqote-backend"]
+regex = "1.5.4"
+raqote = "0.8.0"
+log = "0.4.14"
+env_logger = "0.9.0"
+html2md = "0.2.13"
+resvg = "0.19.0"
+usvg = "0.19.0"
+tiny-skia = "0.6.1"

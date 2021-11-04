@@ -19,6 +19,8 @@ macro_rules! unwrap {
 }
 
 fn main() {
+    env_logger::init();
+
     let matches = App::new(crate_name!())
         .bin_name(crate_name!())
         .version(crate_version!())
@@ -56,5 +58,7 @@ fn main() {
     let mut output = unwrap!(File::create(output_path), "couldn't open output file");
 
     let tex = markdown_to_tex(content);
-    unwrap!(output.write(tex.as_bytes()), "couldn't write output file");
+    output
+        .write_all(tex.as_bytes())
+        .expect("couldn't write output file");
 }
