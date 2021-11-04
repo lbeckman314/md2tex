@@ -1,4 +1,3 @@
-use md2tex::md_to_tex;
 use md2tex::Converter;
 use std::fs::read_to_string;
 use std::fs::File;
@@ -20,15 +19,13 @@ fn integration_test() {
     let template_file = "tests/template.tex";
     let template = read_to_string(template_file).expect("Something went wrong reading the file");
 
-    let converter = Converter::new(&content)
+    let latex = Converter::new(&content)
         .template(&template)
-        .assets("tests/book/src/");
-    let latex = md_to_tex(converter);
+        .assets(Path::new("tests/book/src/"))
+        .run();
 
     match file.write_all(latex.as_bytes()) {
         Err(why) => panic!("couldn't write to {}: {}", display, why),
         Ok(_) => println!("successfully wrote to {}", display),
     }
-
-    assert!(true);
 }

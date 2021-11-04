@@ -1,4 +1,7 @@
-use html2md::parse_html;
+mod converter;
+mod events;
+mod writer;
+
 use inflector::cases::kebabcase::to_kebab_case;
 
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag};
@@ -11,208 +14,147 @@ use std::str::FromStr;
 use std::string::String;
 use tiny_skia::Pixmap;
 use walkdir::WalkDir;
+use writer::TexWriter;
 
+use events::*;
 use log::*;
 
+pub use converter::Converter;
+
 /// TODO https://github.com/raphlinus/pulldown-cmark/blob/master/src/html.rs
-
-/// Used to keep track of current pulldown_cmark "event".
-#[derive(Debug)]
-enum EventType {
-    Code,
-    Emphasis,
-    Header,
-    Html,
-    Strong,
-    Table,
-    TableHead,
-    Text,
-    BlockQuote,
-}
-
-pub struct CurrentType {
-    event_type: EventType,
-}
-
-pub struct Converter<'a> {
-    content: &'a str,
-    template: Option<&'a str>,
-    assets: Option<&'a Path>,
-    chap_offset: i32,
-    code_utf8_escape: Option<(&'a str, &'a str)>,
-}
-
-impl<'a> Converter<'a> {
-    pub fn new(content: &'a str) -> Converter<'a> {
-        Converter {
-            content,
-            template: None,
-            assets: None,
-            chap_offset: 0,
-            code_utf8_escape: None,
-        }
-    }
-
-    pub fn template(self, template: &'a str) -> Converter {
-        Converter {
-            template: Some(template),
-            ..self
-        }
-    }
-
-    pub fn assets(self, assets: &'a Path) -> Converter {
-        Converter {
-            assets: Some(assets),
-            ..self
-        }
-    }
-
-    pub fn chapter_level_offset(mut self, offset: i32) -> Self {
-        self.chap_offset = offset;
-        self
-    }
-
-    /// Set escape for UTF-8 characters inside code listings
-    pub fn code_utf8_escape(mut self, start_escape: &'a str, end_escape: &'a str) -> Self {
-        self.code_utf8_escape = Some((start_escape, end_escape));
-        self
-    }
-
-    pub fn run(self) -> String {
-        md_to_tex(self)
-    }
-}
 
 /// Backwards-compatible function.
 pub fn markdown_to_tex(content: String) -> String {
     Converter::new(&content).run()
 }
 
-pub fn md_to_tex(converter: Converter) -> String {
-    let latex = convert(&converter);
-
-    let mut output = String::new();
-    match converter.template {
-        Some(template) => {
-            output.push_str(template);
-            // Insert new LaTeX data into template after "\begin{document}".
-            let mark = "\\begin{document}";
-            let pos = template.find(&mark).unwrap() + mark.len();
-            output.insert_str(pos, &latex);
-        }
-        None => output.push_str(&latex),
-    }
-
-    output
-}
-
-pub fn escape_tex_text(md: &str) -> String {
-    md.replace(r"\", r"\\")
-        .replace("&", r"\&")
-        .replace(r"\s", r"\textbackslash{}s")
-        .replace(r"\w", r"\textbackslash{}w")
-        .replace("_", r"\_")
-        .replace(r"\<", "<")
-        .replace(r"%", r"\%")
-        .replace(r"$", r"\$")
-        .replace(r"—", "---")
-        .replace("#", r"\#")
-}
-
 /// Converts markdown string to tex string.
 fn convert(converter: &Converter) -> String {
-    let mut output = String::new();
+    log::info!("Start conversion");
+
+    let mut writer = TexWriter::new(String::new());
 
     let mut header_value = String::new();
+    let mut table_buffer = TexWriter::new(String::new());
 
-    let mut current: CurrentType = CurrentType {
-        event_type: EventType::Text,
-    };
+    let mut event_stack = Vec::new();
 
     let mut cells = 0;
 
-    let mut options = Options::empty();
-    options.insert(Options::ENABLE_SMART_PUNCTUATION);
-    options.insert(Options::ENABLE_STRIKETHROUGH);
-    options.insert(Options::ENABLE_FOOTNOTES);
-    options.insert(Options::ENABLE_TASKLISTS);
-    options.insert(Options::ENABLE_TABLES);
+    let options = Options::ENABLE_SMART_PUNCTUATION
+        | Options::ENABLE_STRIKETHROUGH
+        | Options::ENABLE_FOOTNOTES
+        | Options::ENABLE_TASKLISTS
+        | Options::ENABLE_TABLES;
 
     let parser = Parser::new_ext(converter.content, options);
 
-    let mut equation_mode = false;
     let mut buffer = String::new();
 
     for event in parser {
         match event {
             Event::Start(Tag::Heading(level)) => {
-                current.event_type = EventType::Header;
-                output.push_str("\n\\");
-
+                let last_ev = event_stack.last().copied().unwrap_or_default();
                 let level = level as i32 + converter.chap_offset;
 
+                event_stack.push(EventType::Header);
+
+                writer.new_line();
                 match level {
-                    // -1 => output.push_str("part{"),
-                    0 => output.push_str("chapter{"),
-                    1 => output.push_str("section{"),
-                    2 => output.push_str("subsection{"),
-                    3 => output.push_str("subsubsection{"),
-                    4 => output.push_str("paragraph{"),
-                    5..=8 => output.push_str("subparagraph{"),
-                    _ => error!("header is out of range."),
-                }
+                    i32::MIN..=0 => writer.push_str(r"\chapter{"),
+                    1 => writer.push_str(r"\section{"),
+                    2 => writer.push_str(r"\subsection{"),
+                    3 => writer.push_str(r"\subsubsection{"),
+                    4 => {
+                        // https://tex.stackexchange.com/questions/169830/pdflatex-raise-error-when-paragraph-inside-quote-environment
+                        if matches!(last_ev, EventType::BlockQuote) {
+                            writer.push_str(r"\mbox{} %").new_line();
+                        }
+                        writer.push_str(r"\paragraph{")
+                    }
+                    5..=i32::MAX => {
+                        // https://tex.stackexchange.com/questions/169830/pdflatex-raise-error-when-paragraph-inside-quote-environment
+                        if matches!(last_ev, EventType::BlockQuote) {
+                            writer.push_str(r"\mbox{} %").new_line();
+                        }
+                        writer.push_str(r"\subparagraph{")
+                    }
+                };
             }
             Event::End(Tag::Heading(_)) => {
                 writeln!(
-                    output,
+                    writer,
                     "}}\n\\label{{{}}}\n\\label{{{}}}",
                     header_value,
                     to_kebab_case(&header_value)
                 )
                 .unwrap();
+
+                event_stack.pop();
             }
             Event::Start(Tag::Emphasis) => {
-                current.event_type = EventType::Emphasis;
-                output.push_str("\\emph{");
+                event_stack.push(EventType::Emphasis);
+                writer.push_str(r"\emph{");
             }
-            Event::End(Tag::Emphasis) => output.push('}'),
+            Event::End(Tag::Emphasis) => {
+                writer.push('}');
+                event_stack.pop();
+            }
 
             Event::Start(Tag::Strong) => {
-                current.event_type = EventType::Strong;
-                output.push_str("\\textbf{");
+                event_stack.push(EventType::Strong);
+                writer.push_str(r"\textbf{");
             }
-            Event::End(Tag::Strong) => output.push('}'),
+            Event::End(Tag::Strong) => {
+                writer.push('}');
+                event_stack.pop();
+            }
 
             Event::Start(Tag::BlockQuote) => {
-                current.event_type = EventType::BlockQuote;
-                output.push_str("\n\\begin{quote}\n");
+                event_stack.push(EventType::BlockQuote);
+                writer.new_line().push_str(r"\begin{quote}").new_line();
             }
-            Event::End(Tag::BlockQuote) => output.push_str("\n\\end{quote}\n\n"),
+            Event::End(Tag::BlockQuote) => {
+                writer
+                    .new_line()
+                    .push_str(r"\end{quote}")
+                    .new_line()
+                    .new_line();
 
-            Event::Start(Tag::List(None)) => output.push_str("\\begin{itemize}\n"),
-            Event::End(Tag::List(None)) => output.push_str("\\end{itemize}\n"),
+                event_stack.pop();
+            }
 
-            Event::Start(Tag::List(Some(_))) => output.push_str("\\begin{enumerate}\n"),
-            Event::End(Tag::List(Some(_))) => output.push_str("\\end{enumerate}\n"),
+            Event::Start(Tag::List(None)) => {
+                writer.new_line().push_str(r"\begin{itemize}").new_line();
+            }
+            Event::End(Tag::List(None)) => {
+                writer.new_line().push_str(r"\end{itemize}").new_line();
+            }
 
-            Event::Start(Tag::Paragraph) => output.push('\n'),
+            Event::Start(Tag::List(Some(_))) => {
+                writer.push_str(r"\begin{enumerate}").new_line();
+            }
+            Event::End(Tag::List(Some(_))) => {
+                writer.push_str(r"\end{enumerate}").new_line();
+            }
+
+            Event::Start(Tag::Paragraph) => {
+                writer.new_line();
+            }
 
             Event::End(Tag::Paragraph) => {
                 // ~ adds a space to prevent
                 // "There's no line here to end" error on empty lines.
-                output.push_str(r"~\\");
-                output.push('\n');
+                writer.push_str(r"~\\").new_line();
             }
 
             Event::Start(Tag::Link(_, url, _)) => {
                 // URL link (e.g. "https://nasa.gov/my/cool/figure.png")
                 if url.starts_with("http") {
-                    output.push_str("\\href{");
-                    output.push_str(&*url);
-                    output.push_str("}{");
+                    write!(writer, r"\href{{{}}}{{", url).unwrap();
                 // local link (e.g. "my/cool/figure.png")
                 } else {
-                    output.push_str("\\hyperref[");
+                    writer.push_str(r"\hyperref[");
                     let mut found = false;
 
                     // iterate through `src` directory to find the resource.
@@ -231,98 +173,98 @@ fn convert(converter: &Converter) -> String {
                     }
 
                     if !found {
-                        output.push_str(&*url.replace("#", ""));
+                        writer.push_str(&*url.replace("#", ""));
                     }
 
-                    output.push_str("]{");
+                    writer.push_str("]{");
                 }
             }
 
             Event::End(Tag::Link(_, _, _)) => {
-                output.push('}');
+                writer.push('}');
             }
 
             Event::Start(Tag::Table(_)) => {
-                current.event_type = EventType::Table;
+                event_stack.push(EventType::Table);
 
-                let table_start = vec![
-                    "\n",
+                let table_start = [
                     r"\begingroup",
                     r"\setlength{\LTleft}{-20cm plus -1fill}",
                     r"\setlength{\LTright}{\LTleft}",
                     r"\begin{longtable}{!!!}",
                     r"\hline",
                     r"\hline",
-                    "\n",
                 ];
-                for element in table_start {
-                    output.push_str(element);
-                    output.push('\n');
-                }
-            }
 
-            Event::Start(Tag::TableHead) => {
-                current.event_type = EventType::TableHead;
-            }
-
-            Event::End(Tag::TableHead) => {
-                output.truncate(output.len() - 2);
-                output.push_str(r"\\");
-                writeln!(output, "\n\\hline").unwrap();
-
-                // we presume that a table follows every table head.
-                current.event_type = EventType::Table;
+                table_buffer.new_line().push_lines(table_start).new_line();
             }
 
             Event::End(Tag::Table(_)) => {
-                let table_end = vec![
+                let table_end = [
                     r"\arrayrulecolor{black}\hline",
                     r"\end{longtable}",
                     r"\endgroup",
-                    "\n",
                 ];
 
-                for element in table_end {
-                    output.push_str(element);
-                    output.push('\n');
-                }
+                table_buffer.push_lines(table_end).new_line();
 
                 let mut cols = String::new();
                 for _i in 0..cells {
-                    cols.push_str(&format!(
-                        r"C{{{width}\textwidth}} ",
-                        width = 1. / cells as f64
-                    ));
+                    write!(cols, r"C{{{width}\textwidth}} ", width = 1. / cells as f64).unwrap();
                 }
-                output = output.replace("!!!", &cols);
+
+                writer.push_str(&table_buffer.buffer().replace("!!!", &cols));
+                table_buffer.buffer().clear();
+
                 cells = 0;
-                current.event_type = EventType::Text;
+
+                event_stack.pop();
+            }
+
+            Event::Start(Tag::TableHead) => {
+                event_stack.push(EventType::TableHead);
+            }
+
+            Event::End(Tag::TableHead) => {
+                let limit = table_buffer.buffer().len() - 2;
+
+                table_buffer.buffer().truncate(limit);
+
+                table_buffer
+                    .back_slash()
+                    .back_slash()
+                    .new_line()
+                    .push_str(r"\hline")
+                    .new_line();
+
+                event_stack.pop();
             }
 
             Event::Start(Tag::TableCell) => {
-                if let EventType::TableHead = current.event_type {
-                    output.push_str(r"\bfseries{");
+                if matches!(event_stack.last(), Some(EventType::TableHead)) {
+                    table_buffer.push_str(r"\bfseries{");
                 }
             }
 
             Event::End(Tag::TableCell) => {
-                if let EventType::TableHead = current.event_type {
-                    output.push('}');
+                if matches!(event_stack.last(), Some(EventType::TableHead)) {
+                    table_buffer.push('}');
                     cells += 1;
                 }
 
-                output.push_str(" & ");
+                table_buffer.push_str(" & ");
             }
 
-            Event::Start(Tag::TableRow) => {
-                current.event_type = EventType::Table;
-            }
+            Event::Start(Tag::TableRow) => {}
 
             Event::End(Tag::TableRow) => {
-                output.truncate(output.len() - 2);
-                output.push_str(r"\\");
-                output.push_str(r"\arrayrulecolor{lightgray}\hline");
-                output.push('\n');
+                let limit = table_buffer.buffer().len() - 2;
+
+                table_buffer.buffer().truncate(limit);
+
+                table_buffer
+                    .push_str(r"\\\arrayrulecolor{lightgray}\hline")
+                    .new_line();
             }
 
             Event::Start(Tag::Image(_, path, title)) => {
@@ -352,150 +294,181 @@ fn convert(converter: &Converter) -> String {
                     assets_path = path;
                 }
 
-                output.push_str("\\begin{figure}\n");
-                output.push_str("\\centering\n");
-                output.push_str("\\includegraphics[width=\\textwidth]{");
-                output.push_str(assets_path.to_string_lossy().as_ref());
-                output.push_str("}\n");
-                output.push_str("\\caption{");
-                output.push_str(&*title);
-                output.push_str("}\n\\end{figure}\n");
+                writer
+                    .push_str(r"\begin{figure}")
+                    .new_line()
+                    .push_str(r"\centering")
+                    .new_line()
+                    .push_str(r"\includegraphics[width=\textwidth]{")
+                    .push_str(assets_path.to_string_lossy().as_ref())
+                    .push('}')
+                    .new_line()
+                    .push_str(r"\caption{")
+                    .push_str(&*title)
+                    .push('}')
+                    .new_line()
+                    .push_str(r"\end{figure}")
+                    .new_line();
             }
 
-            Event::Start(Tag::Item) => output.push_str("\\item "),
-            Event::End(Tag::Item) => output.push('\n'),
+            Event::Start(Tag::Item) => {
+                writer.push_str(r"\item ");
+            }
+            Event::End(Tag::Item) => {
+                writer.new_line();
+            }
 
             Event::Start(Tag::CodeBlock(lang)) => {
                 let re = Regex::new(r",.*").unwrap();
-                current.event_type = EventType::Code;
+
                 match lang {
                     CodeBlockKind::Indented => {
-                        output.push_str("\\begin{lstlisting}\n");
+                        writer.push_str(r"\begin{lstlisting}").new_line();
                     }
                     CodeBlockKind::Fenced(lang) => {
-                        output.push_str("\\begin{lstlisting}[language=");
+                        writer.push_str(r"\begin{lstlisting}[language=");
                         let lang = re.replace(&lang, "");
                         let lang = lang
                             .split_whitespace()
                             .next()
                             .unwrap_or_else(|| lang.as_ref());
 
-                        writeln!(output, "{}]", lang).unwrap();
+                        writeln!(writer, "{}]", lang).unwrap();
                     }
                 }
+
+                event_stack.push(EventType::Code);
             }
 
             Event::End(Tag::CodeBlock(_)) => {
-                output.push_str("\n\\end{lstlisting}\n");
-                current.event_type = EventType::Text;
+                writer.new_line().push_str(r"\end{lstlisting}").new_line();
+
+                event_stack.pop();
             }
 
             Event::Code(t) => {
-                output.push_str(r"\lstinline");
-
-                let mut code = String::with_capacity(t.len());
-
-                if let Some((es, ee)) = converter.code_utf8_escape {
-                    for c in t.chars() {
-                        if c.is_ascii() {
-                            code.push(c);
-                        } else {
-                            write!(code, "{}{}{}", es, c, ee).unwrap();
-                        }
-                    }
-                } else {
-                    code.push_str(&*t);
-                }
-
-                let delims = ['|', '!', '?', '+', '@'];
-
-                let delim = delims
+                let wr = if event_stack
                     .iter()
-                    .find(|c| !code.contains(**c))
-                    .expect("Failed to find listing delmeter");
+                    .any(|ev| matches!(ev, EventType::Table | EventType::TableHead))
+                {
+                    &mut table_buffer
+                } else {
+                    &mut writer
+                };
 
-                write!(output, "{}{}{}", delim, code, delim).unwrap();
+                if event_stack.contains(&EventType::Header) {
+                    wr.push_str(r"\texttt{").escape_str(&t).push('}');
+                } else {
+                    let mut code = String::with_capacity(t.len());
+
+                    if let Some((es, ee)) = converter.code_utf8_escape {
+                        for c in t.chars() {
+                            if c.is_ascii() {
+                                code.push(c);
+                            } else {
+                                write!(code, "{}{}{}", es, c, ee).unwrap();
+                            }
+                        }
+                    } else {
+                        code.push_str(&*t);
+                    }
+
+                    let delims = ['|', '!', '?', '+', '@'];
+
+                    let delim = delims
+                        .iter()
+                        .find(|c| !code.contains(**c))
+                        .expect("Failed to find listing delmeter");
+
+                    write!(wr, r"\lstinline{}{}{}", delim, code, delim).unwrap();
+                }
             }
 
-            Event::Html(t) => {
-                current.event_type = EventType::Html;
+            Event::Html(_t) => {
+                //current.event_type = EventType::Html;
                 // convert common html patterns to tex
                 //output.push_str(
                 //convert(&parse_html(&t.into_string()), assets_prefix, chap_offset).as_str(),
                 //);
-                current.event_type = EventType::Text;
+                //current.event_type = EventType::Text;
             }
 
             Event::Text(t) => {
-                // if "\(" or "\[" are encountered, then begin equation
+                // if "$$", "\[", "\(" are encountered, then begin equation
                 // and don't replace any characters.
-                let delim_start = vec![r"\(", r"\["];
-                let delim_end = vec![r"\)", r"\]"];
 
-                if buffer.len() > 100 {
-                    buffer.clear();
-                }
+                let regex_eq_start = Regex::new(r"(\$\$|\\\[|\\\()").unwrap();
+                let regex_eq_end = Regex::new(r"(\$\$|\\\]|\\\))").unwrap();
 
-                buffer.push_str(&t.clone().into_string());
+                buffer.clear();
+                buffer.push_str(&t.to_string());
 
-                match current.event_type {
+                let mut on_text = |wr: &mut TexWriter<String>| {
+                    // TODO more elegant way to do ordered `replace`s (structs?).
+                    while !buffer.is_empty() {
+                        if let Some(m) = regex_eq_start.find(&buffer) {
+                            log::debug!("Equation start: {:#?}", m);
+
+                            let end = m.end();
+                            let start = m.start();
+
+                            wr.escape_str(&buffer[..start]).push_str(r"\[");
+                            buffer.drain(..end);
+
+                            let m = regex_eq_end
+                                .find(&buffer)
+                                .expect("Failed to detect end of equation");
+
+                            log::debug!("Equation end: {:#?}", m);
+
+                            let start = m.start();
+                            let end = m.end();
+
+                            wr.push_str(&buffer[..start]).push_str(r"\]");
+                            buffer.drain(..end);
+                        }
+
+                        wr.escape_str(&buffer);
+                        buffer.clear();
+
+                        header_value = t.to_string();
+                    }
+                };
+
+                match event_stack.last().copied().unwrap_or_default() {
                     EventType::Strong
                     | EventType::Emphasis
-                    | EventType::Table
-                    | EventType::TableHead
                     | EventType::Text
-                    | EventType::Header => {
-                        // TODO more elegant way to do ordered `replace`s (structs?).
-                        if delim_start
-                            .into_iter()
-                            .any(|element| buffer.contains(element))
-                        {
-                            let popped = output.pop().unwrap();
-                            if popped != '\\' {
-                                output.push(popped);
-                            }
-                            output.push_str(&*t);
-                            equation_mode = true;
-                        } else if delim_end
-                            .into_iter()
-                            .any(|element| buffer.contains(element))
-                            || equation_mode
-                        {
-                            let popped = output.pop().unwrap();
-                            if popped != '\\' {
-                                output.push(popped);
-                            }
-                            output.push_str(&*t);
-                            equation_mode = false;
-                        } else {
-                            output.push_str(&escape_tex_text(&*t));
-                        }
-                        header_value = t.into_string();
+                    | EventType::Header => on_text(&mut writer),
+
+                    EventType::Table | EventType::TableHead => on_text(&mut table_buffer),
+
+                    _ => {
+                        writer.push_str(&*t);
                     }
-                    _ => output.push_str(&*t),
                 }
             }
 
             Event::SoftBreak => {
-                output.push('\n');
+                writer.new_line();
             }
 
             Event::HardBreak => {
-                output.push_str(r"\\");
-                output.push('\n');
+                writer.back_slash().back_slash().new_line();
             }
 
             _ => (),
         }
     }
 
-    output
+    writer.into_buffer()
 }
 
 /// Simple HTML parser.
 ///
 /// Eventually I hope to use a mature 'HTML to tex' parser.
 /// Something along the lines of https://github.com/Adonai/html2md/
+/*
 pub fn html2tex(html: String, current: &CurrentType, assets_prefix: Option<&Path>) -> String {
     let mut tex = html;
     let mut output = String::new();
@@ -575,6 +548,7 @@ pub fn html2tex(html: String, current: &CurrentType, assets_prefix: Option<&Path
 
     output
 }
+*/
 
 /// Converts an SVG file to a PNG file.
 ///
@@ -592,11 +566,3 @@ pub fn svg2png(filename: &Path) -> Pixmap {
     pixmap
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn svg2png_test() {}
-
-    #[test]
-    fn get_extension_test() {}
-}

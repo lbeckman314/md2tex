@@ -19,6 +19,8 @@ macro_rules! unwrap {
 }
 
 fn main() {
+    env_logger::init();
+
     let matches = App::new(crate_name!())
         .bin_name(crate_name!())
         .version(crate_version!())
